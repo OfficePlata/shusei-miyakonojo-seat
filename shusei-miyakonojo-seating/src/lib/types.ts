@@ -37,7 +37,7 @@ export type TableKind = "normal" | "head";
 
 export interface SeatingTable {
   id: string;
-  name: string; // テーブル名（A, B, 1, 2, 来賓席 など）
+  name: string; // テーブル名（1, 2, 3, 来賓席 など）
   capacity: number; // 席数
   shape: TableShape;
   kind: TableKind; // normal=通常卓 / head=来賓・役員卓

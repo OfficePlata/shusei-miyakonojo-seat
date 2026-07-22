@@ -1,0 +1,12 @@
+name = "shusei-miyakonojo-seat"
+compatibility_date = "2026-07-01"
+
+# OfficePlata アカウントに固定したい場合は下記を有効化（wrangler whoami で確認）
+# account_id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Next.js の静的エクスポート出力（out/）をそのまま配信する。
+# Worker スクリプト（main）は不要 ＝ 純粋な静的アセット配信。
+[assets]
+directory = "./out"
+# 未知のパスは Next の 404.html を返す
+not_found_handling = "404-page"

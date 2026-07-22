@@ -54,8 +54,6 @@ export const EVENT_SEEDS: EventSeed[] = [
   },
 ];
 
-const TABLE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-
 export interface TableLayoutOptions {
   tableCount: number;
   seatsPerTable: number;
@@ -104,7 +102,7 @@ export function generateTables(opts: TableLayoutOptions): SeatingTable[] {
     const row = Math.floor(index / cols);
     tables.push({
       id: uid("tbl"),
-      name: TABLE_LETTERS[i] ?? `T${i + 1}`,
+      name: String(i + 1),
       capacity: opts.seatsPerTable,
       shape: "round",
       kind: "normal" as TableKind,
@@ -117,12 +115,23 @@ export function generateTables(opts: TableLayoutOptions): SeatingTable[] {
   return tables;
 }
 
+/** テーブル名を数値優先で比較する（"1","2",…,"10","11" を正しい順に並べる） */
+export function compareTableName(a: string, b: string): number {
+  const na = Number.parseInt(a, 10);
+  const nb = Number.parseInt(b, 10);
+  const aIsNum = !Number.isNaN(na) && String(na) === a.trim();
+  const bIsNum = !Number.isNaN(nb) && String(nb) === b.trim();
+  if (aIsNum && bIsNum) return na - nb; // 数字同士は数値順（10 が 2 より後ろに来る）
+  if (aIsNum) return -1; // 数字を先頭側に
+  if (bIsNum) return 1;
+  return a.localeCompare(b, "ja"); // それ以外（来賓席 など）は日本語順
+}
+
+/** テーブル追加時の次の番号（既存の最大番号 + 1） */
 export function nextTableName(existing: SeatingTable[]): string {
-  const used = new Set(existing.map((t) => t.name));
-  for (const letter of TABLE_LETTERS) {
-    if (!used.has(letter)) return letter;
-  }
-  let i = existing.length + 1;
-  while (used.has(`T${i}`)) i++;
-  return `T${i}`;
+  const nums = existing
+    .map((t) => Number.parseInt(t.name, 10))
+    .filter((n) => !Number.isNaN(n));
+  const max = nums.length ? Math.max(...nums) : 0;
+  return String(max + 1);
 }

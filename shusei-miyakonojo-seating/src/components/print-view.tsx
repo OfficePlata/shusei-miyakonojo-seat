@@ -5,6 +5,7 @@ import { useCurrentEvent } from "@/lib/store";
 import type { Attendee, SeatingTable } from "@/lib/types";
 import { CATEGORY_ORDER } from "@/lib/types";
 import { CATEGORY_STYLES, formatEventDate } from "@/lib/ui-helpers";
+import { compareTableName } from "@/lib/events";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toPng } from "html-to-image";
@@ -43,7 +44,7 @@ export function PrintView({ open, onClose }: Props) {
 
   const orderedTables = [...event.tables].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "head" ? -1 : 1;
-    return a.name.localeCompare(b.name, "ja");
+    return compareTableName(a.name, b.name);
   });
 
   const exportPng = async () => {
