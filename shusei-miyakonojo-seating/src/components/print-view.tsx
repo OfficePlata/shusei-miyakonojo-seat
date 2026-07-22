@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCurrentEvent } from "@/lib/store";
 import type { Attendee, SeatingTable } from "@/lib/types";
 import { dutyLabels } from "@/lib/types";
@@ -17,10 +17,26 @@ interface Props {
   onClose: () => void;
 }
 
+// 96dpi での 1mm あたり px（CSS の物理サイズ換算）
+const MM = 96 / 25.4;
+const PAGE_MARGIN_MM = 8;
+const PAPERS = {
+  a4: { label: "A4", w: 297, h: 210 },
+  a3: { label: "A3", w: 420, h: 297 },
+} as const;
+type Paper = keyof typeof PAPERS;
+
 export function PrintView({ open, onClose }: Props) {
   const event = useCurrentEvent();
   const areaRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
+  const [paper, setPaper] = useState<Paper>("a4");
+  const [fitOnePage, setFitOnePage] = useState(true);
+  const [scale, setScale] = useState(1);
+
+  // 用紙の内寸（余白を除いた印字可能領域）を px 換算
+  const innerW = Math.round((PAPERS[paper].w - PAGE_MARGIN_MM * 2) * MM);
+  const innerH = Math.round((PAPERS[paper].h - PAGE_MARGIN_MM * 2) * MM);
 
   useEffect(() => {
     if (open) {
@@ -28,6 +44,23 @@ export function PrintView({ open, onClose }: Props) {
       return () => document.body.classList.remove("print-mode");
     }
   }, [open]);
+
+  // コンテンツの実高さを測り、1ページに収まる縮小率を算出する
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = areaRef.current;
+    if (!el) return;
+    const measure = () => {
+      const contentH = el.scrollHeight;
+      const s =
+        fitOnePage && contentH > 0 ? Math.min(1, innerH / contentH) : 1;
+      setScale(s);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, fitOnePage, innerH, innerW, event]);
 
   if (!open || !event) return null;
 
@@ -67,11 +100,53 @@ export function PrintView({ open, onClose }: Props) {
     }
   };
 
+  const overflowing = fitOnePage && scale < 0.999;
+
   return (
-    <div className="fixed inset-0 z-50 overflow-auto bg-neutral-200">
+    <div className="print-overlay fixed inset-0 z-50 overflow-auto bg-neutral-200">
+      {/* 選択中の用紙で印刷サイズを指定（A4/A3 ヨコ） */}
+      <style>{`@media print { @page { size: ${PAPERS[paper].label} landscape; margin: ${PAGE_MARGIN_MM}mm; } }`}</style>
+
       {/* ツールバー */}
-      <div className="no-print sticky top-0 z-10 flex items-center justify-between border-b bg-card px-4 py-2.5 shadow-sm">
-        <div className="text-sm font-bold">座席表プレビュー</div>
+      <div className="no-print sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b bg-card px-4 py-2.5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="text-sm font-bold">座席表プレビュー</div>
+          {/* 用紙サイズ */}
+          <div className="flex overflow-hidden rounded-md border">
+            {(Object.keys(PAPERS) as Paper[]).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPaper(p)}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-semibold transition-colors",
+                  paper === p
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-background text-muted-foreground hover:bg-accent",
+                )}
+              >
+                {PAPERS[p].label}ヨコ
+              </button>
+            ))}
+          </div>
+          {/* 1ページに収める */}
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium">
+            <input
+              type="checkbox"
+              checked={fitOnePage}
+              onChange={(e) => setFitOnePage(e.target.checked)}
+              className="size-3.5 accent-primary"
+            />
+            1ページに収める
+          </label>
+          {fitOnePage && (
+            <span className="text-[11px] text-muted-foreground">
+              {overflowing
+                ? `自動縮小 ${Math.round(scale * 100)}%`
+                : "原寸で収まっています"}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -93,12 +168,21 @@ export function PrintView({ open, onClose }: Props) {
         </div>
       </div>
 
-      {/* 印刷領域 */}
-      <div className="mx-auto my-4 max-w-[1200px] px-4">
+      {/* 印刷領域（用紙1ページを表す枠。fitOnePage 時は内容を自動縮小して収める） */}
+      <div className="print-preview-wrap mx-auto my-4 w-fit px-4">
         <div
-          ref={areaRef}
-          className="print-area rounded-lg bg-white p-8 shadow-lg"
+          className="print-sheet relative mx-auto bg-white shadow-lg"
+          style={{
+            width: innerW,
+            height: fitOnePage ? innerH : "auto",
+            overflow: fitOnePage ? "hidden" : "visible",
+          }}
         >
+          <div
+            className="print-scale origin-top-left"
+            style={{ width: innerW, transform: `scale(${scale})` }}
+          >
+            <div ref={areaRef} className="print-area bg-white p-6">
           {/* ヘッダー */}
           <div className="mb-3 flex items-end justify-between border-b-2 border-neutral-800 pb-2">
             <div>
@@ -180,6 +264,8 @@ export function PrintView({ open, onClose }: Props) {
               作成日：
               {new Date().toLocaleDateString("ja-JP")}
             </span>
+          </div>
+            </div>
           </div>
         </div>
       </div>

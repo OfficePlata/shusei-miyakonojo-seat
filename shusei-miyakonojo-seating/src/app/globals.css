@@ -132,19 +132,16 @@
   animation: seat-pop 0.18s ease-out;
 }
 
-/* Print styles: only show the seating chart print area */
+/* Print styles: only show the seating chart print sheet */
 @media print {
-  @page {
-    size: A4 landscape;
-    margin: 8mm;
-  }
+  /* @page の size / margin は PrintView が用紙選択に応じて動的に指定する */
   html,
   body {
     background: #fff !important;
   }
   /* 背景の網掛け・罫線・帯をモノクロ印刷でも確実に出す */
-  .print-area,
-  .print-area * {
+  .print-sheet,
+  .print-sheet * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
@@ -155,15 +152,27 @@
   body.print-mode .app-workspace {
     display: none !important;
   }
-  .print-area {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    padding: 0 !important;
-    margin: 0 !important;
+  /* オーバーレイ・外枠を素の配置に戻し、余計な余白/背景/スクロールを消す */
+  .print-overlay {
+    position: static !important;
+    overflow: visible !important;
     background: #fff !important;
   }
-  /* A4 ヨコ 1 枚にバランスよく収める：卓グリッドは常に 4 列 */
+  .print-preview-wrap {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: auto !important;
+  }
+  /* 用紙1ページ分の枠。内容は print-scale の transform で収まっている */
+  .print-sheet {
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+  .print-area {
+    padding: 0 !important;
+  }
+  /* 卓グリッドは常に 4 列（A4/A3 いずれもバランスよく） */
   .print-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
     gap: 4px !important;
