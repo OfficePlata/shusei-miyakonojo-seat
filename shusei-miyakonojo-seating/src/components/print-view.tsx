@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useCurrentEvent } from "@/lib/store";
 import type { Attendee, SeatingTable } from "@/lib/types";
-import { CATEGORY_ORDER } from "@/lib/types";
+import { CATEGORY_ORDER, dutyLabels } from "@/lib/types";
 import { CATEGORY_STYLES, formatEventDate } from "@/lib/ui-helpers";
 import { compareTableName } from "@/lib/events";
 import { Button } from "@/components/ui/button";
@@ -189,6 +189,24 @@ export function PrintView({ open, onClose }: Props) {
   );
 }
 
+/** 会場列の表示：ゲストは「ゲスト」、他会場の会員はその会場名、自会場（都城）会員は空欄 */
+function venueCell(att: Attendee): string {
+  if (att.category === "guest") return "ゲスト";
+  const v = (att.venue ?? "").trim();
+  if (!v || v === "都城") return "";
+  return v;
+}
+
+/** 備考列の表示：役割（TM/受付…）＋役職＋ゲストは紹介者＋自由備考 をまとめる */
+function remarksCell(att: Attendee): string {
+  const parts: string[] = [];
+  parts.push(...dutyLabels(att.duties));
+  if (att.role) parts.push(att.role);
+  if (att.category === "guest" && att.referrer) parts.push(att.referrer);
+  if (att.notes) parts.push(att.notes);
+  return parts.join("・");
+}
+
 function TableCard({
   table,
   seats,
@@ -198,73 +216,96 @@ function TableCard({
 }) {
   const isHead = table.kind === "head";
   const count = seats.size;
+  // 手本に合わせ、最低10行（席数が多い場合は席数分）まで枠を出す
+  const rows = Math.max(table.capacity, 10);
+
   return (
     <div
       className={cn(
-        "break-inside-avoid overflow-hidden rounded-lg border",
-        isHead ? "border-amber-300" : "border-border",
+        "flex break-inside-avoid overflow-hidden rounded border",
+        isHead ? "border-amber-400" : "border-neutral-400",
       )}
     >
+      {/* 左：卓番号の縦帯 */}
       <div
         className={cn(
-          "flex items-center justify-between px-2.5 py-1.5 text-white",
-          isHead ? "bg-amber-500" : "bg-primary",
+          "flex w-8 shrink-0 flex-col items-center justify-center gap-1 border-r px-0.5 text-center",
+          isHead
+            ? "border-amber-400 bg-amber-100 text-amber-800"
+            : "border-neutral-400 bg-neutral-100 text-neutral-700",
         )}
       >
-        <span className="flex items-center gap-1 font-brand text-base font-bold">
-          {isHead && <Crown className="size-4" />}
-          {table.name}
-          {!isHead && " 卓"}
-        </span>
-        <span className="text-[11px] font-semibold opacity-90">
+        {isHead ? (
+          <Crown className="size-4" />
+        ) : (
+          <span className="font-brand text-lg font-bold leading-none">
+            {table.name}
+          </span>
+        )}
+        <span className="text-[8px] font-semibold opacity-70">
           {count}/{table.capacity}
         </span>
       </div>
-      <ol className="divide-y">
-        {Array.from({ length: table.capacity }).map((_, i) => {
-          const att = seats.get(i);
-          return (
-            <li
-              key={i}
-              className={cn(
-                "flex items-center gap-1.5 px-2 py-1 text-xs",
-                !att && "bg-muted/30",
-              )}
-            >
-              <span className="w-4 shrink-0 text-center text-[10px] font-bold text-muted-foreground">
-                {i + 1}
-              </span>
-              {att ? (
-                <>
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      CATEGORY_STYLES[att.category].dot,
-                    )}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="font-bold text-foreground">
+
+      {/* 右：席の明細テーブル */}
+      <table className="w-full table-fixed border-collapse text-[10px]">
+        <thead>
+          <tr className="bg-neutral-100 text-neutral-600">
+            <th className="w-5 border-b border-neutral-300 py-0.5 font-semibold">
+              No.
+            </th>
+            <th className="w-9 border-b border-l border-neutral-300 py-0.5 font-semibold">
+              会場
+            </th>
+            <th className="border-b border-l border-neutral-300 py-0.5 font-semibold">
+              氏名
+            </th>
+            <th className="w-12 border-b border-l border-neutral-300 py-0.5 font-semibold">
+              備考
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, i) => {
+            const att = seats.get(i);
+            const isGuest = att?.category === "guest";
+            return (
+              <tr
+                key={i}
+                className={cn(
+                  "align-middle",
+                  isGuest && "bg-neutral-200/70",
+                  !att && "text-neutral-300",
+                )}
+              >
+                <td className="border-b border-neutral-200 text-center font-semibold text-neutral-500">
+                  {i + 1}
+                </td>
+                <td className="truncate border-b border-l border-neutral-200 px-0.5 text-center text-[9px] text-neutral-600">
+                  {att ? venueCell(att) : ""}
+                </td>
+                <td className="truncate border-b border-l border-neutral-200 px-1">
+                  {att ? (
+                    <span className="font-bold text-neutral-900">
                       {att.name}
+                      {att.isFirstTime && (
+                        <span className="ml-0.5 text-[8px] font-bold text-amber-600">
+                          初
+                        </span>
+                      )}
                     </span>
-                    {att.company && (
-                      <span className="ml-1 text-[10px] text-muted-foreground">
-                        {att.company}
-                      </span>
-                    )}
-                  </span>
-                  {att.isFirstTime && (
-                    <span className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-bold text-amber-700">
-                      初
-                    </span>
+                  ) : (
+                    ""
                   )}
-                </>
-              ) : (
-                <span className="text-[10px] text-muted-foreground/60">空席</span>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+                </td>
+                <td className="truncate border-b border-l border-neutral-200 px-0.5 text-center text-[9px] text-neutral-600">
+                  {att ? remarksCell(att) : ""}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

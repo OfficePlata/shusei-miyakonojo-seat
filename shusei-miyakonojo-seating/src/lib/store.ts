@@ -358,7 +358,7 @@ export const useStore = create<StoreState>()(
       };
     },
     {
-      name: "shusei-miyakonojo-seating:v4",
+      name: "shusei-miyakonojo-seating:v5",
       partialize: (s) => ({
         events: s.events,
         currentEventId: s.currentEventId,

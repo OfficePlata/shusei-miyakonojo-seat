@@ -2,6 +2,7 @@ import type {
   Assignment,
   Attendee,
   AutoAssignRules,
+  Duty,
   SeatingTable,
 } from "./types";
 
@@ -96,7 +97,8 @@ export function autoAssign(
     if (!placed) unassigned.push(att);
   }
 
-  // テーブルごとに席番号を割り当て（会員とゲストが交互になるよう軽く整列）
+  // テーブルごとに席番号を割り当て
+  // orderByStage: ステージに近い席（番号が小さい席）から TM → ゲスト＋紹介者 → その他
   for (const t of tables) {
     const occ = occupants.get(t.id)!;
     const lockedForTable = assignments.filter((a) => a.tableId === t.id);
@@ -104,7 +106,9 @@ export function autoAssign(
     const lockedAttSet = new Set(lockedForTable.map((a) => a.attendeeId));
 
     const toSeat = occ.filter((a) => !lockedAttSet.has(a.id));
-    const arranged = interleaveByCategory(toSeat);
+    const arranged = rules.orderByStage
+      ? orderSeatsByStage(toSeat)
+      : interleaveByCategory(toSeat);
 
     let seat = 0;
     for (const att of arranged) {
@@ -115,6 +119,40 @@ export function autoAssign(
   }
 
   return { assignments, unassigned };
+}
+
+/**
+ * 席順をステージ近い順に整える。
+ * ①TM → ②ゲスト（直後に同卓の紹介者） → ③残り（来賓・会員・事務局）
+ */
+function orderSeatsByStage(list: Attendee[]): Attendee[] {
+  const used = new Set<string>();
+  const result: Attendee[] = [];
+  const take = (a: Attendee) => {
+    if (used.has(a.id)) return;
+    used.add(a.id);
+    result.push(a);
+  };
+
+  // ① TM（司会も前方寄りに）
+  for (const a of list) if (a.duties?.includes("tm")) take(a);
+  for (const a of list) if (a.duties?.includes("mc")) take(a);
+
+  // ② ゲスト（続けて同卓にいる紹介者を隣に）
+  for (const g of list) {
+    if (used.has(g.id) || g.category !== "guest") continue;
+    take(g);
+    if (g.referrer) {
+      const ref = list.find(
+        (x) => !used.has(x.id) && normalize(x.name) === normalize(g.referrer!),
+      );
+      if (ref) take(ref);
+    }
+  }
+
+  // ③ 残り
+  for (const a of list) take(a);
+  return result;
 }
 
 /** 会員とゲストがなるべく隣り合うよう交互に並べ替える */
@@ -175,6 +213,19 @@ function scoreTable(
     ) {
       score -= 14;
     }
+    if (
+      rules.spreadVenue &&
+      att.venue &&
+      o.venue &&
+      normalize(att.venue) === normalize(o.venue)
+    ) {
+      // 同じ他会場を固めない（各卓へ散らす）
+      score -= 18;
+    }
+    if (rules.spreadDuties) {
+      // ブース出展者・受付など同じ役割が同卓に固まらないようにする
+      score -= dutyOverlap(att.duties, o.duties) * 30;
+    }
     if (rules.keepGuestNearReferrer && att.category === "guest" && att.referrer) {
       if (normalize(o.name) === normalize(att.referrer)) score += 30;
     }
@@ -194,6 +245,15 @@ function scoreTable(
 
 function normalize(s: string): string {
   return s.trim().toLowerCase();
+}
+
+/** 2人が共通して持つ役割（ブース・受付など）の数 */
+function dutyOverlap(a?: Duty[], b?: Duty[]): number {
+  if (!a?.length || !b?.length) return 0;
+  const set = new Set(a);
+  let n = 0;
+  for (const d of b) if (set.has(d)) n++;
+  return n;
 }
 
 // 決定的な擬似乱数（seed 指定で再現可能）

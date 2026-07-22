@@ -15,6 +15,55 @@ export const CATEGORY_ORDER: AttendeeCategory[] = [
   "staff",
 ];
 
+// 当日の役割（1人が複数持てる）。TM・受付・ブース・司会をシステムで管理する。
+export type Duty =
+  | "tm"
+  | "mc"
+  | "reception"
+  | "booth"
+  | "negotiation"
+  | "flyer";
+
+export const DUTY_LABELS: Record<Duty, string> = {
+  tm: "TM",
+  mc: "司会",
+  reception: "受付",
+  booth: "ブース",
+  negotiation: "商談",
+  flyer: "チラシ",
+};
+
+// 印刷・表示・席順で使う役割の並び順
+export const DUTY_ORDER: Duty[] = [
+  "tm",
+  "mc",
+  "reception",
+  "booth",
+  "negotiation",
+  "flyer",
+];
+
+/** 備考・自由入力から Duty 配列を推定する */
+export function parseDuties(value: string): Duty[] {
+  const v = (value ?? "").toLowerCase();
+  const out: Duty[] = [];
+  const has = (...words: string[]) =>
+    words.some((w) => v.includes(w.toLowerCase()));
+  if (has("tm", "ｔｍ")) out.push("tm");
+  if (has("司会", "mc")) out.push("mc");
+  if (has("受付", "reception")) out.push("reception");
+  if (has("ブース", "booth", "出展")) out.push("booth");
+  if (has("商談")) out.push("negotiation");
+  if (has("チラシ", "flyer")) out.push("flyer");
+  return out;
+}
+
+/** Duty 配列を印刷順に整えたラベル配列にする */
+export function dutyLabels(duties?: Duty[]): string[] {
+  if (!duties?.length) return [];
+  return DUTY_ORDER.filter((d) => duties.includes(d)).map((d) => DUTY_LABELS[d]);
+}
+
 export interface Attendee {
   id: string;
   name: string; // 氏名
@@ -22,6 +71,8 @@ export interface Attendee {
   company: string; // 会社名
   industry: string; // 業種
   category: AttendeeCategory; // 区分
+  venue?: string; // 所属会場（鹿児島 / 宮崎 / 大分中央 / 延岡 / ヒルノ沖縄 など）
+  duties?: Duty[]; // 当日の役割（TM / 受付 / ブース / 司会 など）
   referrer?: string; // 紹介者（ゲストの場合）
   role?: string; // 役職・肩書き（代表世話人 など）
   group?: string; // 班・グループ
@@ -70,8 +121,11 @@ export interface SeatingEvent {
 export interface AutoAssignRules {
   spreadIndustry: boolean; // 同業種を分散
   separateCompany: boolean; // 同一会社を分離
+  spreadVenue: boolean; // 他会場を各卓へ分散（同じ会場を固めない）
+  spreadDuties: boolean; // ブース・受付など役割保持者を各卓へ分散
   mixGuests: boolean; // 会員とゲストを混在
   keepGuestNearReferrer: boolean; // ゲストを紹介者と同卓に
+  orderByStage: boolean; // 席順をステージ近い順（TM→ゲスト→紹介者）に整える
   balanceTables: boolean; // 各卓の人数を均等化
   seatVipAtHead: boolean; // 来賓を来賓卓へ
   respectConstraints: boolean; // 個別の同席/分離設定を尊重
@@ -80,8 +134,11 @@ export interface AutoAssignRules {
 export const DEFAULT_RULES: AutoAssignRules = {
   spreadIndustry: true,
   separateCompany: true,
+  spreadVenue: true,
+  spreadDuties: true,
   mixGuests: true,
-  keepGuestNearReferrer: false,
+  keepGuestNearReferrer: true,
+  orderByStage: true,
   balanceTables: true,
   seatVipAtHead: true,
   respectConstraints: true,

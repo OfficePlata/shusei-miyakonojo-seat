@@ -18,10 +18,13 @@ import {
   Building2,
   Layers,
   Lock,
+  MapPin,
   Scale,
   Shuffle,
   Sparkles,
+  Tag,
   UserCheck,
+  ArrowUpNarrowWide,
   Crown,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -49,6 +52,24 @@ const RULE_META: {
     label: "同一会社を分ける",
     desc: "同じ会社の人を別々の卓に配置",
     icon: Building2,
+  },
+  {
+    key: "spreadVenue",
+    label: "他会場を分散",
+    desc: "同じ会場から来た人を各卓へ散らす",
+    icon: MapPin,
+  },
+  {
+    key: "spreadDuties",
+    label: "役割を分散（受付・ブース）",
+    desc: "TM・受付・ブースなど同じ役割を各卓へ散らす",
+    icon: Tag,
+  },
+  {
+    key: "orderByStage",
+    label: "席順をステージ近い順に",
+    desc: "各卓の前方から TM → ゲスト → 紹介者 の順に並べる",
+    icon: ArrowUpNarrowWide,
   },
   {
     key: "mixGuests",
