@@ -135,11 +135,18 @@
 /* Print styles: only show the seating chart print area */
 @media print {
   @page {
-    size: A3 landscape;
-    margin: 12mm;
+    size: A4 landscape;
+    margin: 8mm;
   }
+  html,
   body {
     background: #fff !important;
+  }
+  /* 背景の網掛け・罫線・帯をモノクロ印刷でも確実に出す */
+  .print-area,
+  .print-area * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   .no-print {
     display: none !important;
@@ -155,6 +162,11 @@
     padding: 0 !important;
     margin: 0 !important;
     background: #fff !important;
+  }
+  /* A4 ヨコ 1 枚にバランスよく収める：卓グリッドは常に 4 列 */
+  .print-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 4px !important;
   }
   .print-break {
     break-after: page;

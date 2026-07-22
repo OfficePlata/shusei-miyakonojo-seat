@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useCurrentEvent } from "@/lib/store";
 import type { Attendee, SeatingTable } from "@/lib/types";
-import { CATEGORY_ORDER, dutyLabels } from "@/lib/types";
+import { dutyLabels } from "@/lib/types";
 import { CATEGORY_STYLES, formatEventDate } from "@/lib/ui-helpers";
 import { compareTableName } from "@/lib/events";
 import { Button } from "@/components/ui/button";
@@ -100,48 +100,46 @@ export function PrintView({ open, onClose }: Props) {
           className="print-area rounded-lg bg-white p-8 shadow-lg"
         >
           {/* ヘッダー */}
-          <div className="mb-5 flex items-end justify-between border-b-2 border-primary pb-3">
+          <div className="mb-3 flex items-end justify-between border-b-2 border-neutral-800 pb-2">
             <div>
               <img
                 src="/brand/logo-header.webp"
                 alt="守成クラブ 都城会場"
-                className="mb-1.5 h-6 w-auto object-contain"
+                className="mb-1 h-5 w-auto object-contain grayscale"
               />
-              <h1 className="font-brand text-3xl font-bold text-foreground">
+              <h1 className="font-brand text-2xl font-bold text-neutral-900">
                 {event.title}　座席表
               </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-0.5 text-xs text-neutral-600">
                 {formatEventDate(event.date)}　会場：{event.venue}
               </p>
             </div>
-            <div className="text-right text-xs text-muted-foreground">
-              <div>
+            <div className="text-right text-[11px] text-neutral-600">
+              <div className="font-semibold">
                 出席 {event.attendees.length}名 / 着席{" "}
                 {event.assignments.length}名
               </div>
-              <div className="mt-2 flex justify-end gap-2">
-                {CATEGORY_ORDER.map((c) => (
-                  <span key={c} className="inline-flex items-center gap-1">
-                    <span
-                      className={cn(
-                        "size-2.5 rounded-full",
-                        CATEGORY_STYLES[c].dot,
-                      )}
-                    />
-                    {CATEGORY_STYLES[c].label}
-                  </span>
-                ))}
+              {/* モノクロ印刷向けの凡例 */}
+              <div className="mt-1.5 flex items-center justify-end gap-3">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-4 rounded-sm border border-neutral-400 bg-neutral-200" />
+                  ゲスト
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="font-bold text-neutral-800">初</span>
+                  ＝初参加
+                </span>
               </div>
             </div>
           </div>
 
           {/* ステージ表示 */}
-          <div className="mb-4 text-center text-[11px] font-semibold tracking-widest text-muted-foreground">
+          <div className="mb-2 border-y border-neutral-300 bg-neutral-100 py-1 text-center text-[11px] font-bold tracking-widest text-neutral-700">
             ▲ 会場前方（ステージ・演台）
           </div>
 
           {/* テーブルカード */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="print-grid grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
             {orderedTables.map((t) => (
               <TableCard
                 key={t.id}
