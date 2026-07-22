@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 30 20% 98%;
+    --foreground: 220 15% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 15% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 15% 16%;
+    /* 守成レッド #ba1d24 */
+    --primary: 357 73% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 12% 94%;
+    --secondary-foreground: 220 15% 20%;
+    --muted: 30 12% 94%;
+    --muted-foreground: 220 8% 46%;
+    --accent: 357 60% 96%;
+    --accent-foreground: 357 73% 38%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 10% 88%;
+    --input: 30 10% 86%;
+    --ring: 357 73% 42%;
+    --radius: 0.5rem;
+
+    /* Brand tokens */
+    --shusei-red: 357 73% 42%;
+    --shusei-red-dark: 357 72% 32%;
+    --ink: 220 20% 14%;
+    --gold: 38 60% 52%;
+
+    /* Category colors */
+    --cat-member: 357 73% 45%;
+    --cat-guest: 210 70% 45%;
+    --cat-vip: 38 72% 45%;
+    --cat-staff: 150 40% 40%;
+
+    --chart-1: 357 73% 50%;
+    --chart-2: 210 70% 50%;
+    --chart-3: 38 72% 55%;
+    --chart-4: 150 45% 45%;
+    --chart-5: 280 45% 55%;
+  }
+
+  .dark {
+    --background: 220 20% 10%;
+    --foreground: 30 15% 92%;
+    --card: 220 18% 13%;
+    --card-foreground: 30 15% 92%;
+    --popover: 220 18% 13%;
+    --popover-foreground: 30 15% 92%;
+    --primary: 357 70% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 12% 20%;
+    --secondary-foreground: 30 15% 92%;
+    --muted: 220 12% 18%;
+    --muted-foreground: 220 8% 62%;
+    --accent: 220 14% 22%;
+    --accent-foreground: 30 15% 92%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 12% 22%;
+    --input: 220 12% 24%;
+    --ring: 357 70% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    font-feature-settings: "palt" 1;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans-jp), "Hiragino Kaku Gothic ProN",
+      "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .font-brand {
+    font-family: var(--font-serif-jp), "Yu Mincho", "Hiragino Mincho ProN",
+      serif;
+  }
+}
+
+/* Subtle paper texture background for the workspace */
+.bg-washi {
+  background-color: hsl(30 20% 98%);
+  background-image: radial-gradient(
+      hsl(30 12% 88% / 0.5) 1px,
+      transparent 1px
+    );
+  background-size: 22px 22px;
+}
+
+/* Custom scrollbars */
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: hsl(30 10% 80%);
+  border-radius: 999px;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background: hsl(30 10% 70%);
+}
+
+/* Drag cursor helpers */
+.dragging * {
+  cursor: grabbing !important;
+}
+
+@keyframes seat-pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-seat-pop {
+  animation: seat-pop 0.18s ease-out;
+}
+
+/* Print styles: only show the seating chart print area */
+@media print {
+  @page {
+    size: A3 landscape;
+    margin: 12mm;
+  }
+  body {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  /* 印刷プレビュー表示中は本体を隠す */
+  body.print-mode .app-workspace {
+    display: none !important;
+  }
+  .print-area {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+  }
+  .print-break {
+    break-after: page;
+  }
+}
