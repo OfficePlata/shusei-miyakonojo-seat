@@ -1,12 +1,30 @@
 name = "shusei-miyakonojo-seat"
+main = "worker/index.ts"
 compatibility_date = "2026-07-01"
 
-# OfficePlata アカウントに固定したい場合は下記を有効化（wrangler whoami で確認）
-# account_id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# 誤アカウントデプロイ防止のためピン留め（a-sasahala@officeplata.com）
+account_id = "d945eddc1446103b3696aa537e581563"
 
 # Next.js の静的エクスポート出力（out/）をそのまま配信する。
-# Worker スクリプト（main）は不要 ＝ 純粋な静的アセット配信。
+# /api/* だけ Worker が先に受け、それ以外は静的アセットへ流す。
 [assets]
 directory = "./out"
+binding = "ASSETS"
 # 未知のパスは Next の 404.html を返す
 not_found_handling = "404-page"
+run_worker_first = ["/api/*"]
+
+[observability]
+enabled = true
+
+# 秘密でない識別子だけ置く。LARK_APP_SECRET は wrangler secret put で投入する。
+[vars]
+LARK_DOMAIN = "open.larksuite.com"
+LARK_BASE_APP_TOKEN = "F9bgbmD20aazWss3k6kjnrVhpfn"
+LARK_APP_ID = "cli_aaf99d4170389e13"
+
+# tenant_access_token のキャッシュ。sewaninja-portal と同じ namespace を共有し、
+# キーは "seat:" プレフィックスで分けている。
+[[kv_namespaces]]
+binding = "KV"
+id = "df1654d5173043be9bba566ceeabd1ed"

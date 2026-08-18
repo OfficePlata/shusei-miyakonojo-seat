@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Cloudflare Workers のローカル秘密情報（コミットしない）
+.dev.vars
+
+# Cloudflare
+.wrangler/
+
+# macOS
+.DS_Store

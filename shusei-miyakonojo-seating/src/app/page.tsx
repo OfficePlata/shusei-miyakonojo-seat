@@ -31,6 +31,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { BarChart3, Users } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -57,10 +58,19 @@ export default function Home() {
   const moveTable = useStore((s) => s.moveTable);
   const selectedTableId = useStore((s) => s.selectedTableId);
 
+  const loadMeetingsFromLark = useStore((s) => s.loadMeetingsFromLark);
+
   useEffect(() => {
+    // まず手元の状態で画面を出し、そのあと Lark の例会一覧で揃える。
+    // 通信に失敗しても（社外・オフライン）ツールは手元のデータで動く。
     seedIfEmpty();
     setMounted(true);
-  }, [seedIfEmpty]);
+    loadMeetingsFromLark().catch((e: unknown) => {
+      toast.error(
+        `例会の一覧を取得できませんでした: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
+  }, [seedIfEmpty, loadMeetingsFromLark]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),

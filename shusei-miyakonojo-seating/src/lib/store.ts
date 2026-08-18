@@ -19,6 +19,13 @@ import {
 } from "./events";
 import { createSampleAttendees } from "./sample-data";
 import { autoAssign } from "./auto-assign";
+import {
+  fetchMeetings,
+  fetchSeating,
+  saveSeating,
+  toDateString,
+  type SaveResult,
+} from "./lark";
 
 function newEventFromSeed(
   seed: (typeof EVENT_SEEDS)[number],
@@ -46,8 +53,18 @@ interface StoreState {
   selectedAttendeeId: string | null;
   selectedTableId: string | null;
 
+  /** Lark と通信中かどうか。ボタンの二重押しを止めるのに使う */
+  sync: "idle" | "loading" | "saving";
+  /** 最後に Lark から読み込んだ／保存した時刻 */
+  syncedAt: number | null;
+
   // init
   seedIfEmpty: () => void;
+
+  // Lark 連携
+  loadMeetingsFromLark: () => Promise<void>;
+  loadAttendeesFromLark: (meetingId?: string) => Promise<number>;
+  saveSeatingToLark: () => Promise<SaveResult>;
 
   // event
   setCurrentEvent: (id: string) => void;
@@ -107,6 +124,8 @@ export const useStore = create<StoreState>()(
         rules: DEFAULT_RULES,
         selectedAttendeeId: null,
         selectedTableId: null,
+        sync: "idle",
+        syncedAt: null,
 
         seedIfEmpty: () => {
           const { events } = get();
@@ -123,6 +142,128 @@ export const useStore = create<StoreState>()(
           );
           first.assignments = assignments;
           set({ events: seeded, currentEventId: seeded[0].id });
+        },
+
+        /**
+         * Lark の例会マスタで例会一覧を置き換える。
+         *
+         * ローカルで組んだ卓のレイアウトと割当は id が一致すれば残す
+         * （タイトル・日付・会場だけ Lark に合わせる）。
+         * **Lark に無い例会は捨てる。** 例会マスタが唯一の正で、
+         * 手元にだけある例会を残すと、どれが本物か分からなくなる。
+         */
+        loadMeetingsFromLark: async () => {
+          const { meetings, upcoming } = await fetchMeetings();
+          const now = Date.now();
+
+          set((state) => {
+            const byId = new Map(state.events.map((e) => [e.id, e]));
+            const merged: SeatingEvent[] = meetings.map((m) => {
+              const prev = byId.get(m.recordId);
+              if (prev) {
+                return {
+                  ...prev,
+                  title: m.name,
+                  date: toDateString(m.startAt),
+                  venue: m.venue,
+                };
+              }
+              return {
+                id: m.recordId,
+                title: m.name,
+                date: toDateString(m.startAt),
+                venue: m.venue,
+                attendees: [],
+                tables: generateTables(DEFAULT_LAYOUT),
+                assignments: [],
+                lockedAttendeeIds: [],
+                createdAt: now,
+                updatedAt: now,
+              };
+            });
+
+            // 例会が1つも返ってこなかったときは触らない（通信の一時不調で全部消さない）
+            if (merged.length === 0) return {};
+
+            const current =
+              merged.find((e) => e.id === state.currentEventId)?.id ??
+              upcoming?.recordId ??
+              merged[0]?.id ??
+              "";
+            return { events: merged, currentEventId: current };
+          });
+        },
+
+        /**
+         * 選んでいる例会の参加者を Lark から読み込む。
+         *
+         * 参加者は **出席の回答がある人だけ**（自会場・他会場・ゲスト）。
+         * Lark 側に保存済みの卓割があればそれも復元する。
+         * 卓のレイアウトは、Lark に保存が無ければ手元のものを使う。
+         */
+        loadAttendeesFromLark: async (meetingId) => {
+          const id = meetingId ?? get().currentEventId;
+          if (!id) throw new Error("例会が選ばれていません");
+
+          set({ sync: "loading" });
+          try {
+            const data = await fetchSeating(id);
+            let count = 0;
+            set((state) => ({
+              currentEventId: id,
+              syncedAt: Date.now(),
+              events: state.events.map((e) => {
+                if (e.id !== id) return e;
+                count = data.attendees.length;
+                const tables = data.layout?.tables?.length
+                  ? data.layout.tables
+                  : e.tables;
+                // 割当は Lark 側にあるものだけを残す。
+                // 参加者が取り消して居なくなった人の割当が残ると、
+                // 存在しない人が卓に座り続ける
+                const ids = new Set(data.attendees.map((a) => a.id));
+                const tableIds = new Set(tables.map((t) => t.id));
+                const assignments = (data.layout?.assignments ?? []).filter(
+                  (a) => ids.has(a.attendeeId) && tableIds.has(a.tableId),
+                );
+                return touch({
+                  ...e,
+                  title: data.meeting.name,
+                  date: toDateString(data.meeting.startAt),
+                  venue: data.meeting.venue,
+                  attendees: data.attendees,
+                  tables,
+                  assignments,
+                  lockedAttendeeIds: (data.layout?.lockedAttendeeIds ?? []).filter(
+                    (x) => ids.has(x),
+                  ),
+                });
+              }),
+            }));
+            return count;
+          } finally {
+            set({ sync: "idle" });
+          }
+        },
+
+        /** いまの卓割を Lark へ保存する。受付名簿がこの結果を読む */
+        saveSeatingToLark: async () => {
+          const state = get();
+          const e = state.events.find((x) => x.id === state.currentEventId);
+          if (!e) throw new Error("例会が選ばれていません");
+
+          set({ sync: "saving" });
+          try {
+            const result = await saveSeating(e.id, {
+              tables: e.tables,
+              assignments: e.assignments,
+              lockedAttendeeIds: e.lockedAttendeeIds,
+            });
+            set({ syncedAt: Date.now() });
+            return result;
+          } finally {
+            set({ sync: "idle" });
+          }
         },
 
         setCurrentEvent: (id) =>
@@ -358,7 +499,9 @@ export const useStore = create<StoreState>()(
       };
     },
     {
-      name: "shusei-miyakonojo-seating:v5",
+      // v6: 例会の id を Lark 例会マスタの record_id に変えた。
+      // 旧バージョンのサンプルデータ（evt-2026-07 など）は読み込まない。
+      name: "shusei-miyakonojo-seating:v6",
       partialize: (s) => ({
         events: s.events,
         currentEventId: s.currentEventId,
