@@ -5,6 +5,34 @@ import type {
   Duty,
   SeatingTable,
 } from "./types";
+import { DEFAULT_RULES, isHomeVenue, isNightBiz, isSewanin } from "./types";
+
+/* ------------------------------------------------------------
+ * 同卓に固めたくない属性グループ
+ *
+ * TM は「卓の顔」なので各卓 1 人が原則（重複ペナルティを桁違いに重くする）。
+ * 受付・ブース・スナックバー・世話人は、同卓に偏らなければよい。
+ * ---------------------------------------------------------- */
+
+type SpreadGroup = "tm" | "reception" | "booth" | "night" | "sewanin";
+
+const GROUP_PENALTY: Record<SpreadGroup, number> = {
+  tm: 400,
+  reception: 70,
+  booth: 60,
+  night: 55,
+  sewanin: 35,
+};
+
+function spreadGroups(a: Attendee, rules: AutoAssignRules): SpreadGroup[] {
+  const g: SpreadGroup[] = [];
+  if (rules.oneTmPerTable && a.duties?.includes("tm")) g.push("tm");
+  if (rules.spreadReception && a.duties?.includes("reception")) g.push("reception");
+  if (rules.spreadBooth && a.duties?.includes("booth")) g.push("booth");
+  if (rules.spreadNightBiz && isNightBiz(a)) g.push("night");
+  if (rules.spreadSewanin && isSewanin(a)) g.push("sewanin");
+  return g;
+}
 
 interface AutoAssignResult {
   assignments: Assignment[];
@@ -47,17 +75,28 @@ export function autoAssign(
   const headTables = tables.filter((t) => t.kind === "head");
   const remaining = attendees.filter((a) => !lockedIds.has(a.id));
 
-  // 配置順：来賓 → ゲスト → 会員 → 事務局（各グループ内はシャッフルで多様性）
-  const priority: Record<string, number> = {
-    vip: 0,
-    guest: 1,
-    member: 2,
-    staff: 3,
+  // ゲストの紹介者。ゲストより先に席を決めてからゲストを引き寄せる
+  const referrerNames = new Set(
+    attendees
+      .filter((a) => a.category === "guest" && a.referrer)
+      .map((a) => normalize(a.referrer!)),
+  );
+  const isReferrer = (a: Attendee) => referrerNames.has(normalize(a.name));
+
+  // 配置順：来賓 → TM → ゲストの紹介者 → ゲスト → 分散対象 → 他会場 → 残り
+  // 制約のきつい人から先に置くほど、後段の自由度が残って偏りが減る
+  const rank = (a: Attendee): number => {
+    if (a.category === "vip") return 0;
+    if (a.duties?.includes("tm")) return 1;
+    if (isReferrer(a)) return 2;
+    if (a.category === "guest") return 3;
+    if (spreadGroups(a, rules).length) return 4;
+    if (!isHomeVenue(a)) return 5;
+    return 6;
   };
   const order = [...remaining].sort((a, b) => {
-    const pa = priority[a.category] ?? 2;
-    const pb = priority[b.category] ?? 2;
-    if (pa !== pb) return pa - pb;
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
     return rng() - 0.5;
   });
 
@@ -85,6 +124,16 @@ export function autoAssign(
 
     if (att.category === "vip" && rules.seatVipAtHead && headTables.length) {
       placed = place(att, headTables);
+    }
+
+    // TM はまだ TM のいない卓へ。卓数より TM が多い場合だけ通常フローへ落ちる
+    if (!placed && rules.oneTmPerTable && att.duties?.includes("tm")) {
+      const free = tables.filter(
+        (t) =>
+          t.kind === "normal" &&
+          !occupants.get(t.id)!.some((o) => o.duties?.includes("tm")),
+      );
+      if (free.length) placed = place(att, free);
     }
 
     if (!placed) {
@@ -122,8 +171,15 @@ export function autoAssign(
 }
 
 /**
- * 席順をステージ近い順に整える。
- * ①TM → ②ゲスト（直後に同卓の紹介者） → ③残り（来賓・会員・事務局）
+ * 席順をステージ近い順（席番号の小さい順）に整える。
+ *
+ *   ① TM（その卓の一番うえ）
+ *   ② ゲストの紹介者
+ *   ③ ゲスト
+ *   ④ 自会場メンバー
+ *   ⑤ 他会場からの参加者
+ *
+ * ②と③を続けて置くので、紹介者とゲストは必ず隣り合う。
  */
 function orderSeatsByStage(list: Attendee[]): Attendee[] {
   const used = new Set<string>();
@@ -134,23 +190,26 @@ function orderSeatsByStage(list: Attendee[]): Attendee[] {
     result.push(a);
   };
 
-  // ① TM（司会も前方寄りに）
+  // ① TM（TM が不在の卓は司会を前に）
   for (const a of list) if (a.duties?.includes("tm")) take(a);
   for (const a of list) if (a.duties?.includes("mc")) take(a);
 
-  // ② ゲスト（続けて同卓にいる紹介者を隣に）
-  for (const g of list) {
-    if (used.has(g.id) || g.category !== "guest") continue;
-    take(g);
+  // ②③ 同卓のゲストごとに「紹介者 → ゲスト」の順で並べる
+  const guests = list.filter((a) => a.category === "guest");
+  for (const g of guests) {
     if (g.referrer) {
       const ref = list.find(
         (x) => !used.has(x.id) && normalize(x.name) === normalize(g.referrer!),
       );
       if (ref) take(ref);
     }
+    take(g);
   }
 
-  // ③ 残り
+  // ④ 自会場（来賓・事務局もここに含める）
+  for (const a of list) if (isHomeVenue(a)) take(a);
+
+  // ⑤ 他会場
   for (const a of list) take(a);
   return result;
 }
@@ -187,6 +246,13 @@ function scoreTable(
   }
 
   const guestCount = occ.filter((o) => o.category === "guest").length;
+
+  // 受付・ブース・スナックバー・世話人・TM が同卓に固まらないようにする。
+  // 同じ属性が既に n 人いる卓ほど重く減点し、空いている卓へ押し出す
+  for (const g of spreadGroups(att, rules)) {
+    const n = occ.filter((o) => spreadGroups(o, rules).includes(g)).length;
+    if (n) score -= GROUP_PENALTY[g] * n;
+  }
 
   for (const o of occ) {
     if (rules.respectConstraints) {
@@ -277,6 +343,10 @@ export interface SeatingStats {
   guestOnlyTables: number; // ゲストのみの卓
   tablesUsed: number;
   emptySeats: number;
+  /** 受付・世話人・スナックバー・ブースが同卓に重なったペア数 */
+  groupClashes: Record<SpreadGroup, number>;
+  /** TM が座っていない卓（使用中の卓のうち） */
+  tablesWithoutTm: number;
   score: number; // 総合スコア（高いほど良い）
 }
 
@@ -299,6 +369,23 @@ export function evaluateSeating(
   let guestOnlyTables = 0;
   let tablesUsed = 0;
   let emptySeats = 0;
+  let tablesWithoutTm = 0;
+  const groupClashes: Record<SpreadGroup, number> = {
+    tm: 0,
+    reception: 0,
+    booth: 0,
+    night: 0,
+    sewanin: 0,
+  };
+  // 重なりの計測はルールの ON/OFF に依らず全項目を数える
+  const ALL_ON: AutoAssignRules = {
+    ...DEFAULT_RULES,
+    oneTmPerTable: true,
+    spreadReception: true,
+    spreadSewanin: true,
+    spreadNightBiz: true,
+    spreadBooth: true,
+  };
 
   for (const t of tables) {
     const occ = perTable.get(t.id)!;
@@ -307,6 +394,13 @@ export function evaluateSeating(
 
     if (occ.length > 1 && occ.every((o) => o.category === "guest")) {
       guestOnlyTables++;
+    }
+    if (occ.length > 0 && !occ.some((o) => o.duties?.includes("tm"))) {
+      tablesWithoutTm++;
+    }
+    for (const g of Object.keys(groupClashes) as SpreadGroup[]) {
+      const n = occ.filter((o) => spreadGroups(o, ALL_ON).includes(g)).length;
+      if (n > 1) groupClashes[g] += (n * (n - 1)) / 2;
     }
     for (let i = 0; i < occ.length; i++) {
       for (let j = i + 1; j < occ.length; j++) {
@@ -339,6 +433,8 @@ export function evaluateSeating(
     guestOnlyTables,
     tablesUsed,
     emptySeats,
+    groupClashes,
+    tablesWithoutTm,
     score,
   };
 }

@@ -26,6 +26,11 @@ import {
   UserCheck,
   ArrowUpNarrowWide,
   Crown,
+  Star,
+  ClipboardCheck,
+  Store,
+  Wine,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -66,9 +71,39 @@ const RULE_META: {
     icon: Tag,
   },
   {
+    key: "oneTmPerTable",
+    label: "TM は各卓に1人",
+    desc: "テーブルマスターを卓ごとに1人ずつ据える",
+    icon: Star,
+  },
+  {
+    key: "spreadReception",
+    label: "受付メンバーを分散",
+    desc: "当日の受付担当が同じ卓に固まらないようにする",
+    icon: ClipboardCheck,
+  },
+  {
+    key: "spreadSewanin",
+    label: "世話人を分散",
+    desc: "世話人・実行委員が同じ卓に偏らないようにする",
+    icon: ShieldCheck,
+  },
+  {
+    key: "spreadNightBiz",
+    label: "スナック・バーを分散",
+    desc: "夜の業態の会員が同じ卓に集まらないようにする",
+    icon: Wine,
+  },
+  {
+    key: "spreadBooth",
+    label: "ブース出店社を分散",
+    desc: "ブースを出す会員を各卓へ散らす",
+    icon: Store,
+  },
+  {
     key: "orderByStage",
     label: "席順をステージ近い順に",
-    desc: "各卓の前方から TM → ゲスト → 紹介者 の順に並べる",
+    desc: "卓の一番うえから TM → 紹介者 → ゲスト → 自会場 → 他会場 の順に並べる",
     icon: ArrowUpNarrowWide,
   },
   {

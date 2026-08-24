@@ -20,6 +20,7 @@
  */
 import {
   ATTENDANCE_FIELDS,
+  DUTY_FIELDS,
   type Bindings,
   fieldDate,
   fieldLinkIds,
@@ -50,6 +51,10 @@ type Attendee = {
   venue: string
   referrer: string
   duties: string[]
+  /** 世話人マスタの役職（代表・副代表・事務局・会計・世話人・実行委員）。一般会員は空 */
+  role: string
+  /** 事業案内の原文。卓割では使わないが画面で参考になる */
+  notes: string
 }
 
 const json = (data: unknown, status = 200): Response =>
@@ -124,6 +129,8 @@ async function loadAttendees(
       venue: kind === KIND.other ? fieldText(r.fields[ATTENDANCE_FIELDS.venueName]) || KIND.other : '',
       referrer: fieldText(r.fields[ATTENDANCE_FIELDS.referrer]),
       duties,
+      role: '',
+      notes: '',
     })
 
     seats[r.record_id] = {
@@ -141,19 +148,83 @@ async function loadAttendees(
  * （会員データ_最新が正なので二重に持たない方針）。名簿を引いて埋める。
  */
 async function fillFromRoster(env: Bindings, attendees: Attendee[]): Promise<void> {
-  const need = attendees.filter((a) => a.category === 'member' && !a.venue && (!a.kana || !a.company))
-  if (need.length === 0) return
+  const members = await searchAll(env, TABLES.members, [
+    '氏名',
+    'フリガナ',
+    '会社名 (団体名)',
+    '事業案内',
+    '業種',
+  ])
+  const roster = new Map(members.map((m) => [nameKey(fieldText(m.fields['氏名'])), m.fields]))
 
-  const members = await searchAll(env, 'tblLubHT4kasU3ch', ['氏名', 'フリガナ', '会社名 (団体名)', '事業案内'])
-  const key = (s: string) => s.replace(/[\s　]/g, '')
-  const roster = new Map(members.map((m) => [key(fieldText(m.fields['氏名'])), m.fields]))
+  for (const a of attendees) {
+    const f = roster.get(nameKey(a.name))
+    if (f) {
+      a.kana ||= fieldText(f['フリガナ'])
+      a.company ||= fieldText(f['会社名 (団体名)'])
+      a.notes ||= fieldText(f['事業案内'])
+      // 人が入れた業種が最優先。「椿」のように屋号からは夜の店と分からない会員はここで直す
+      a.industry ||= fieldText(f['業種'])
+    }
+    // 業種が空なら事業案内と会社名から起こす。
+    // 他会場・ゲストは会員データに行が無いので、会社名だけが手がかりになる
+    a.industry ||= industryOf(`${a.notes} ${a.company}`)
+  }
+}
 
-  for (const a of need) {
-    const f = roster.get(key(a.name))
-    if (!f) continue
-    a.kana ||= fieldText(f['フリガナ'])
-    a.company ||= fieldText(f['会社名 (団体名)'])
-    a.industry ||= fieldText(f['事業案内'])
+const nameKey = (s: string) => s.replace(/[\s　]/g, '')
+
+/**
+ * 事業案内・会社名から業種タグを起こす。
+ * 卓割で散らしたいのはスナック・バーだけなので、今はそれだけを見分ける。
+ * 「クローバー」「スポーツクラブ」のような紛らわしい語は除外する。
+ */
+const NIGHT_BIZ = /(スナック|snack|ラウンジ|lounge|ナイトスポット|キャバ|パブ|BAR|ＢＡＲ|バーの経営|クラブ、)/i
+const NIGHT_NG = /(スポーツクラブ|クローバー|フィットネス|ハーバー|バーガー)/
+function industryOf(text: string): string {
+  if (!text.trim()) return ''
+  return NIGHT_BIZ.test(text) && !NIGHT_NG.test(text) ? 'ナイト' : ''
+}
+
+/** 当番表の「役割」→ ツール側の Duty */
+const DUTY_BY_ROLE: Record<string, string> = {
+  TM: 'tm',
+  受付: 'reception',
+  司会: 'mc',
+}
+
+/**
+ * 当番表から TM・受付・司会を割り当てる。
+ * 座席表ツールはこれを見て「TM を各卓の一番うえ」「受付を各卓へ散らす」を効かせる。
+ * 引受状況が「交代」の行は、代わりの人が別行で入る前提なので読まない。
+ */
+async function applyDuties(env: Bindings, meetingId: string, attendees: Attendee[]): Promise<void> {
+  const records = await searchAll(env, TABLES.duties, Object.values(DUTY_FIELDS))
+  const byName = new Map(attendees.map((a) => [nameKey(a.name), a]))
+
+  for (const r of records) {
+    if (!fieldLinkIds(r.fields[DUTY_FIELDS.meeting]).includes(meetingId)) continue
+    if (fieldText(r.fields[DUTY_FIELDS.status]) === '交代') continue
+    const duty = DUTY_BY_ROLE[fieldText(r.fields[DUTY_FIELDS.role])]
+    if (!duty) continue
+    const a = byName.get(nameKey(fieldText(r.fields[DUTY_FIELDS.personName])))
+    if (!a) continue
+    if (!a.duties.includes(duty)) a.duties.push(duty)
+  }
+}
+
+/**
+ * 世話人マスタの役職を付ける。
+ * 会員データの「会員種別」では8名が一般のままで世話人を取りこぼすため、マスタ側を正とする。
+ */
+async function applySewanin(env: Bindings, attendees: Attendee[]): Promise<void> {
+  const records = await searchAll(env, TABLES.sewanin, ['名前', '役職'])
+  const byName = new Map(attendees.map((a) => [nameKey(a.name), a]))
+
+  for (const r of records) {
+    const a = byName.get(nameKey(fieldText(r.fields['名前'])))
+    if (!a) continue
+    a.role = fieldText(r.fields['役職'])
   }
 }
 
@@ -186,6 +257,8 @@ async function handleGet(env: Bindings, meetingId: string): Promise<Response> {
     searchAll(env, TABLES.meetings, [MEETING_FIELDS.name, MEETING_FIELDS.layout]),
   ])
   await fillFromRoster(env, attendees)
+  // 当番表と世話人マスタは互いに独立なので並行で読む
+  await Promise.all([applyDuties(env, meetingId, attendees), applySewanin(env, attendees)])
 
   const raw = layoutRecords.find((r) => r.record_id === meetingId)
   const layout = parseLayout(fieldText(raw?.fields[MEETING_FIELDS.layout]))

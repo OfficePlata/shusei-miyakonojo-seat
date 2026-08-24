@@ -83,6 +83,28 @@ export interface Attendee {
   keepApart?: string[];
 }
 
+/* ------------------------------------------------------------
+ * 卓割・席順で使う属性判定
+ * ---------------------------------------------------------- */
+
+/** 世話人か（世話人マスタの役職が入っている人。代表・副代表・事務局・会計・実行委員を含む） */
+export function isSewanin(a: Attendee): boolean {
+  return !!(a.role ?? "").trim();
+}
+
+/** スナック・バーなど夜の業態か。取り込み時に業種へ「ナイト」を入れて判定する */
+const NIGHT_BIZ = /(ナイト|スナック|snack|バー|bar|ラウンジ|パブ|キャバ)/i;
+export function isNightBiz(a: Attendee): boolean {
+  return NIGHT_BIZ.test(a.industry ?? "");
+}
+
+/** 自会場（都城）の参加者か。他会場からの参加者は席順で最後に回す */
+export function isHomeVenue(a: Attendee): boolean {
+  const v = `${a.venue ?? ""} ${a.group ?? ""}`;
+  if (/他会場/.test(v)) return false;
+  return /自会場|都城/.test(v) || !v.trim();
+}
+
 export type TableShape = "round" | "rect";
 export type TableKind = "normal" | "head";
 
@@ -125,10 +147,15 @@ export interface AutoAssignRules {
   spreadDuties: boolean; // ブース・受付など役割保持者を各卓へ分散
   mixGuests: boolean; // 会員とゲストを混在
   keepGuestNearReferrer: boolean; // ゲストを紹介者と同卓に
-  orderByStage: boolean; // 席順をステージ近い順（TM→ゲスト→紹介者）に整える
+  orderByStage: boolean; // 席順をステージ近い順（TM→紹介者→ゲスト→自会場→他会場）に整える
   balanceTables: boolean; // 各卓の人数を均等化
   seatVipAtHead: boolean; // 来賓を来賓卓へ
   respectConstraints: boolean; // 個別の同席/分離設定を尊重
+  oneTmPerTable: boolean; // TM は各卓に1人ずつ（卓の顔なので重複させない）
+  spreadReception: boolean; // 受付担当を各卓へ分散
+  spreadSewanin: boolean; // 世話人を各卓へ分散
+  spreadNightBiz: boolean; // スナック・バーの会員を各卓へ分散
+  spreadBooth: boolean; // ブース出店社を各卓へ分散
 }
 
 export const DEFAULT_RULES: AutoAssignRules = {
@@ -142,4 +169,9 @@ export const DEFAULT_RULES: AutoAssignRules = {
   balanceTables: true,
   seatVipAtHead: true,
   respectConstraints: true,
+  oneTmPerTable: true,
+  spreadReception: true,
+  spreadSewanin: true,
+  spreadNightBiz: true,
+  spreadBooth: true,
 };

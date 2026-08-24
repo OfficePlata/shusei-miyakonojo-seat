@@ -19,6 +19,20 @@ export type Bindings = {
 export const TABLES = {
   meetings: 'tblX6OGZ97Bv8Yig',
   attendance: 'tblt95tfb4lGvF8R',
+  /** 当番表。例会ごとの TM・受付などの割当 */
+  duties: 'tblK6nSuzF1nHKMP',
+  /** 世話人マスタ。役職（代表・副代表・事務局・会計・世話人・実行委員） */
+  sewanin: 'tblUU3sh3fdM7p5G',
+  /** 会員データ_最新。フリガナ・会社名・事業案内の正 */
+  members: 'tblLubHT4kasU3ch',
+} as const
+
+export const DUTY_FIELDS = {
+  meeting: '例会',
+  role: '役割',
+  personName: '担当者名',
+  tableNo: 'テーブル番号',
+  status: '引受状況',
 } as const
 
 export const MEETING_FIELDS = {
