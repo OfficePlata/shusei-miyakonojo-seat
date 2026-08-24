@@ -136,6 +136,11 @@ export interface SeatingEvent {
   assignments: Assignment[];
   /** 自動配置でも動かさない固定席（attendee id） */
   lockedAttendeeIds: string[];
+  /**
+   * 2回転目の割当。例会は途中で席替えをするが、TM とゲストは卓を動かさない。
+   * 未作成なら undefined。受付名簿に出す卓番号は1回転目のもの。
+   */
+  assignments2?: Assignment[];
   createdAt: number;
   updatedAt: number;
 }
@@ -151,6 +156,7 @@ export interface AutoAssignRules {
   balanceTables: boolean; // 各卓の人数を均等化
   seatVipAtHead: boolean; // 来賓を来賓卓へ
   respectConstraints: boolean; // 個別の同席/分離設定を尊重
+  seatGuestsFront: boolean; // ゲストをステージに近い卓へ寄せる
   oneTmPerTable: boolean; // TM は各卓に1人ずつ（卓の顔なので重複させない）
   spreadReception: boolean; // 受付担当を各卓へ分散
   spreadSewanin: boolean; // 世話人を各卓へ分散
@@ -169,6 +175,7 @@ export const DEFAULT_RULES: AutoAssignRules = {
   balanceTables: true,
   seatVipAtHead: true,
   respectConstraints: true,
+  seatGuestsFront: true,
   oneTmPerTable: true,
   spreadReception: true,
   spreadSewanin: true,

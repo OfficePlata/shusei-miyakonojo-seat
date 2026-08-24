@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useCurrentEvent } from "@/lib/store";
+import { useStore, useCurrentEvent } from "@/lib/store";
 import type { Attendee, SeatingTable } from "@/lib/types";
 import { dutyLabels } from "@/lib/types";
 import { CATEGORY_STYLES, formatEventDate } from "@/lib/ui-helpers";
@@ -28,6 +28,7 @@ type Paper = keyof typeof PAPERS;
 
 export function PrintView({ open, onClose }: Props) {
   const event = useCurrentEvent();
+  const rotation = useStore((s) => s.activeRotation);
   const areaRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const [paper, setPaper] = useState<Paper>("a4");
@@ -193,6 +194,11 @@ export function PrintView({ open, onClose }: Props) {
               />
               <h1 className="font-brand text-2xl font-bold text-neutral-900">
                 {event.title}　座席表
+                {rotation === 2 && (
+                  <span className="ml-2 rounded border border-neutral-400 px-1.5 py-0.5 align-middle text-sm font-bold">
+                    2回転目
+                  </span>
+                )}
               </h1>
               <p className="mt-0.5 text-xs text-neutral-600">
                 {formatEventDate(event.date)}　会場：{event.venue}

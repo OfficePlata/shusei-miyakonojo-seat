@@ -230,9 +230,13 @@ async function applySewanin(env: Bindings, attendees: Attendee[]): Promise<void>
 
 // --- 卓割の保存 ---
 
+type Assignment = { attendeeId: string; tableId: string; seatIndex: number }
+
 type SavedLayout = {
   tables?: unknown[]
-  assignments?: { attendeeId: string; tableId: string; seatIndex: number }[]
+  assignments?: Assignment[]
+  /** 2回転目。TM とゲストは1回転目と同じ卓のまま。出欠記録には書かない */
+  assignments2?: Assignment[]
   lockedAttendeeIds?: string[]
   savedAt?: string
 }
@@ -278,6 +282,9 @@ async function handlePut(env: Bindings, meetingId: string, req: Request): Promis
   const layout: SavedLayout = {
     tables: body.tables,
     assignments,
+    ...(Array.isArray(body.assignments2) && body.assignments2.length
+      ? { assignments2: body.assignments2 }
+      : {}),
     lockedAttendeeIds: Array.isArray(body.lockedAttendeeIds) ? body.lockedAttendeeIds : [],
     savedAt: new Date().toISOString(),
   }
@@ -285,7 +292,8 @@ async function handlePut(env: Bindings, meetingId: string, req: Request): Promis
     [MEETING_FIELDS.layout]: JSON.stringify(layout),
   })
 
-  // 1人ずつの卓名・席番号は出欠記録へ。受付名簿はこちらを読む
+  // 1人ずつの卓名・席番号は出欠記録へ。受付名簿はこちらを読む。
+  // 席替え後の卓は書かない（受付で伝えるのは最初に座る卓）
   const tableName = new Map<string, string>()
   for (const t of body.tables as { id?: string; name?: string }[]) {
     if (t?.id) tableName.set(t.id, String(t.name ?? ''))

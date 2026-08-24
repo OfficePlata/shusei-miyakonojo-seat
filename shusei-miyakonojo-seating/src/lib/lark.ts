@@ -22,6 +22,8 @@ export interface LarkSeating {
   layout: {
     tables?: SeatingTable[];
     assignments?: Assignment[];
+    /** 2回転目。TM とゲストは1回転目と同じ卓のまま */
+    assignments2?: Assignment[];
     lockedAttendeeIds?: string[];
     savedAt?: string;
   } | null;
@@ -72,6 +74,7 @@ export async function saveSeating(
   payload: {
     tables: SeatingTable[];
     assignments: Assignment[];
+    assignments2?: Assignment[];
     lockedAttendeeIds: string[];
   },
 ): Promise<SaveResult> {

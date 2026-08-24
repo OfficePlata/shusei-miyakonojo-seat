@@ -47,7 +47,15 @@ export function autoAssign(
   attendees: Attendee[],
   tables: SeatingTable[],
   rules: AutoAssignRules,
-  opts?: { lockedAssignments?: Assignment[]; seed?: number },
+  opts?: {
+    /** 席番号まで固定する（手で置いた席） */
+    lockedAssignments?: Assignment[];
+    /** 卓だけ固定する人。席順は組み直す。2回転目で TM とゲストを動かさないために使う */
+    pinnedTables?: Record<string, string>;
+    /** 前の回転の割当。ここで同卓だった相手とはなるべく離す */
+    previousAssignments?: Assignment[];
+    seed?: number;
+  },
 ): AutoAssignResult {
   const rng = mulberry32(opts?.seed ?? Math.floor(Math.random() * 1e9));
 
@@ -74,6 +82,27 @@ export function autoAssign(
 
   const headTables = tables.filter((t) => t.kind === "head");
   const remaining = attendees.filter((a) => !lockedIds.has(a.id));
+
+  // ステージに近い卓ほど小さい順位。キャンバス上の並び（上ほど前）をそのまま使う
+  const frontOrder = [...tables].sort((a, b) => a.y - b.y || a.x - b.x);
+  const frontRank = new Map(frontOrder.map((t, i) => [t.id, i]));
+  const lastRank = Math.max(1, frontOrder.length - 1);
+
+  // 前の回転で同卓だった組み合わせ。2回転目で同じ顔ぶれにしないために使う
+  const metBefore = new Set<string>();
+  if (opts?.previousAssignments?.length) {
+    const byTable = new Map<string, string[]>();
+    for (const a of opts.previousAssignments) {
+      const arr = byTable.get(a.tableId);
+      if (arr) arr.push(a.attendeeId);
+      else byTable.set(a.tableId, [a.attendeeId]);
+    }
+    for (const ids of byTable.values()) {
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) metBefore.add(pairKey(ids[i], ids[j]));
+      }
+    }
+  }
 
   // ゲストの紹介者。ゲストより先に席を決めてからゲストを引き寄せる
   const referrerNames = new Set(
@@ -106,7 +135,12 @@ export function autoAssign(
     for (const t of candidateTables) {
       const occ = occupants.get(t.id)!;
       if (occ.length >= t.capacity) continue;
-      const s = scoreTable(att, t, occ, rules) + rng() * 3; // わずかな揺らぎ
+      const ctx = {
+        frontRank: frontRank.get(t.id) ?? 0,
+        lastRank,
+        metBefore,
+      };
+      const s = scoreTable(att, t, occ, rules, ctx) + rng() * 3; // わずかな揺らぎ
       if (s > bestScore) {
         bestScore = s;
         best = t;
@@ -122,7 +156,18 @@ export function autoAssign(
   for (const att of order) {
     let placed = false;
 
-    if (att.category === "vip" && rules.seatVipAtHead && headTables.length) {
+    // 卓を指定されている人は、その卓が埋まっていない限り必ずそこへ
+    const pinned = opts?.pinnedTables?.[att.id];
+    if (pinned) {
+      const t = tables.find((x) => x.id === pinned);
+      const occ = t ? occupants.get(t.id) : undefined;
+      if (t && occ && occ.length < t.capacity) {
+        occ.push(att);
+        placed = true;
+      }
+    }
+
+    if (!placed && att.category === "vip" && rules.seatVipAtHead && headTables.length) {
       placed = place(att, headTables);
     }
 
@@ -227,13 +272,27 @@ function interleaveByCategory(list: Attendee[]): Attendee[] {
   return result;
 }
 
+interface ScoreContext {
+  /** ステージからの近さ。0 が最前 */
+  frontRank: number;
+  lastRank: number;
+  /** 前の回転で同卓だった組み合わせ */
+  metBefore: Set<string>;
+}
+
 function scoreTable(
   att: Attendee,
   table: SeatingTable,
   occ: Attendee[],
   rules: AutoAssignRules,
+  ctx: ScoreContext,
 ): number {
   let score = 0;
+
+  // ゲストは前の卓へ。ステージが見えて紹介もしやすい
+  if (rules.seatGuestsFront && att.category === "guest") {
+    score += (1 - ctx.frontRank / ctx.lastRank) * 45;
+  }
 
   if (rules.balanceTables) {
     score += (table.capacity - occ.length) * 2.5;
@@ -295,6 +354,8 @@ function scoreTable(
     if (rules.keepGuestNearReferrer && att.category === "guest" && att.referrer) {
       if (normalize(o.name) === normalize(att.referrer)) score += 30;
     }
+    // 2回転目。前の回転で同じ卓だった人とは、なるべく違う卓にする
+    if (ctx.metBefore.has(pairKey(att.id, o.id))) score -= 28;
   }
 
   if (rules.mixGuests) {
@@ -311,6 +372,11 @@ function scoreTable(
 
 function normalize(s: string): string {
   return s.trim().toLowerCase();
+}
+
+/** 2人組のキー。順序に依らず同じ文字列になる */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 /** 2人が共通して持つ役割（ブース・受付など）の数 */
@@ -380,6 +446,7 @@ export function evaluateSeating(
   // 重なりの計測はルールの ON/OFF に依らず全項目を数える
   const ALL_ON: AutoAssignRules = {
     ...DEFAULT_RULES,
+    seatGuestsFront: true,
     oneTmPerTable: true,
     spreadReception: true,
     spreadSewanin: true,

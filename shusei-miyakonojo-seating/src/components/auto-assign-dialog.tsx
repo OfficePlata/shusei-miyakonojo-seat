@@ -27,6 +27,7 @@ import {
   ArrowUpNarrowWide,
   Crown,
   Star,
+  MoveUp,
   ClipboardCheck,
   Store,
   Wine,
@@ -69,6 +70,12 @@ const RULE_META: {
     label: "役割を分散（受付・ブース）",
     desc: "TM・受付・ブースなど同じ役割を各卓へ散らす",
     icon: Tag,
+  },
+  {
+    key: "seatGuestsFront",
+    label: "ゲストを前方の卓へ",
+    desc: "ステージに近い卓からゲストを埋めていく",
+    icon: MoveUp,
   },
   {
     key: "oneTmPerTable",

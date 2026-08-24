@@ -11,9 +11,14 @@ import type {
 } from "./types";
 import { DEFAULT_RULES } from "./types";
 import {
+  CELL_H,
+  CELL_W,
+  compareTableName,
   DEFAULT_LAYOUT,
   EVENT_SEEDS,
   generateTables,
+  MARGIN_X,
+  MARGIN_Y,
   TableLayoutOptions,
   uid,
 } from "./events";
@@ -101,6 +106,20 @@ interface StoreState {
   // rules + auto
   setRules: (patch: Partial<AutoAssignRules>) => void;
   runAutoAssign: (opts?: { keepLocked?: boolean }) => void;
+  /**
+   * いま画面に出している回転（1 か 2）。
+   * 実体は event.assignments が「表示中」、event.assignments2 が「もう一方」で、
+   * 切り替えるときに中身を入れ替える。こうすると配置・印刷・評価の側は
+   * 回転を意識せず event.assignments だけ見ればよい。
+   */
+  activeRotation: 1 | 2;
+  setRotation: (r: 1 | 2) => void;
+  /** 2回転目を作る。TM とゲストは卓を動かさず、残りを組み替える */
+  runSecondRotation: () => void;
+  /** 2回転目を捨てる */
+  clearSecondRotation: () => void;
+  /** 卓を横 cols 列のグリッドに並べ直す */
+  arrangeTables: (cols: number) => void;
 }
 
 function touch(e: SeatingEvent): SeatingEvent {
@@ -122,6 +141,7 @@ export const useStore = create<StoreState>()(
         events: [],
         currentEventId: "",
         rules: DEFAULT_RULES,
+        activeRotation: 1 as 1 | 2,
         selectedAttendeeId: null,
         selectedTableId: null,
         sync: "idle",
@@ -205,7 +225,7 @@ export const useStore = create<StoreState>()(
           const id = meetingId ?? get().currentEventId;
           if (!id) throw new Error("例会が選ばれていません");
 
-          set({ sync: "loading" });
+          set({ sync: "loading", activeRotation: 1 });
           try {
             const data = await fetchSeating(id);
             let count = 0;
@@ -223,9 +243,10 @@ export const useStore = create<StoreState>()(
                 // 存在しない人が卓に座り続ける
                 const ids = new Set(data.attendees.map((a) => a.id));
                 const tableIds = new Set(tables.map((t) => t.id));
-                const assignments = (data.layout?.assignments ?? []).filter(
-                  (a) => ids.has(a.attendeeId) && tableIds.has(a.tableId),
-                );
+                const keep = (a: { attendeeId: string; tableId: string }) =>
+                  ids.has(a.attendeeId) && tableIds.has(a.tableId);
+                const assignments = (data.layout?.assignments ?? []).filter(keep);
+                const second = (data.layout?.assignments2 ?? []).filter(keep);
                 return touch({
                   ...e,
                   title: data.meeting.name,
@@ -234,6 +255,7 @@ export const useStore = create<StoreState>()(
                   attendees: data.attendees,
                   tables,
                   assignments,
+                  assignments2: second.length ? second : undefined,
                   lockedAttendeeIds: (data.layout?.lockedAttendeeIds ?? []).filter(
                     (x) => ids.has(x),
                   ),
@@ -254,9 +276,15 @@ export const useStore = create<StoreState>()(
 
           set({ sync: "saving" });
           try {
+            // 受付名簿に出す卓番号は必ず1回転目。2回転目を見ている最中でも入れ替えない
+            const first =
+              state.activeRotation === 2 ? (e.assignments2 ?? e.assignments) : e.assignments;
+            const second =
+              state.activeRotation === 2 ? e.assignments : e.assignments2;
             const result = await saveSeating(e.id, {
               tables: e.tables,
-              assignments: e.assignments,
+              assignments: first,
+              assignments2: second,
               lockedAttendeeIds: e.lockedAttendeeIds,
             });
             set({ syncedAt: Date.now() });
@@ -482,7 +510,8 @@ export const useStore = create<StoreState>()(
         setRules: (patch) =>
           set((s) => ({ rules: { ...s.rules, ...patch } })),
 
-        runAutoAssign: (opts) =>
+        runAutoAssign: (opts) => {
+          set({ activeRotation: 1 });
           mutateCurrent((e) => {
             const { rules } = get();
             const keepLocked = opts?.keepLocked ?? true;
@@ -494,7 +523,91 @@ export const useStore = create<StoreState>()(
             const { assignments } = autoAssign(e.attendees, e.tables, rules, {
               lockedAssignments: locked,
             });
-            return { ...e, assignments };
+            // 組み直したら、もう一方の回転は前提が変わるので捨てる
+            return { ...e, assignments, assignments2: undefined };
+          });
+        },
+
+        setRotation: (r) => {
+          if (get().activeRotation === r) return;
+          const e = get().events.find((x) => x.id === get().currentEventId);
+          // 2回転目がまだ無いのに切り替えると空の卓が並ぶだけなので何もしない
+          if (!e?.assignments2?.length) return;
+          mutateCurrent((ev) => ({
+            ...ev,
+            assignments: ev.assignments2 ?? [],
+            assignments2: ev.assignments,
+          }));
+          set({ activeRotation: r });
+        },
+
+        runSecondRotation: () => {
+          // 2回転目を見ている状態から作り直すときは、まず1回転目に戻す
+          if (get().activeRotation === 2) {
+            mutateCurrent((ev) => ({
+              ...ev,
+              assignments: ev.assignments2 ?? [],
+              assignments2: ev.assignments,
+            }));
+            set({ activeRotation: 1 });
+          }
+          mutateCurrent((e) => {
+            const { rules } = get();
+            // TM とゲストは卓を動かさない。席順だけ組み直す
+            const byId = new Map(e.attendees.map((a) => [a.id, a]));
+            const pinnedTables: Record<string, string> = {};
+            for (const a of e.assignments) {
+              const att = byId.get(a.attendeeId);
+              if (!att) continue;
+              if (att.duties?.includes("tm") || att.category === "guest") {
+                pinnedTables[a.attendeeId] = a.tableId;
+              }
+            }
+            const { assignments } = autoAssign(e.attendees, e.tables, rules, {
+              pinnedTables,
+              previousAssignments: e.assignments,
+            });
+            // 作った2回転目をそのまま表示に回し、1回転目を控えへ
+            return { ...e, assignments: assignments, assignments2: e.assignments };
+          });
+          set({ activeRotation: 2 });
+        },
+
+        clearSecondRotation: () => {
+          // 1回転目を表示に戻してから捨てる
+          if (get().activeRotation === 2) {
+            mutateCurrent((ev) => ({
+              ...ev,
+              assignments: ev.assignments2 ?? [],
+              assignments2: undefined,
+            }));
+            set({ activeRotation: 1 });
+            return;
+          }
+          mutateCurrent((e) => ({ ...e, assignments2: undefined }));
+        },
+
+        arrangeTables: (cols) =>
+          mutateCurrent((e) => {
+            const c = Math.max(1, Math.floor(cols));
+            const head = e.tables.filter((t) => t.kind === "head");
+            const normal = e.tables
+              .filter((t) => t.kind !== "head")
+              .sort((a, b) => compareTableName(a.name, b.name));
+            const startY = head.length ? MARGIN_Y + CELL_H : MARGIN_Y;
+            const placed = [
+              ...head.map((t) => ({
+                ...t,
+                x: MARGIN_X + ((c - 1) * CELL_W) / 2,
+                y: MARGIN_Y,
+              })),
+              ...normal.map((t, i) => ({
+                ...t,
+                x: MARGIN_X + (i % c) * CELL_W,
+                y: startY + Math.floor(i / c) * CELL_H,
+              })),
+            ];
+            return { ...e, tables: placed };
           }),
       };
     },
@@ -506,6 +619,7 @@ export const useStore = create<StoreState>()(
         events: s.events,
         currentEventId: s.currentEventId,
         rules: s.rules,
+        activeRotation: s.activeRotation,
       }),
     },
   ),

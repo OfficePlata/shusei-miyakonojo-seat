@@ -70,11 +70,11 @@ export const DEFAULT_LAYOUT: TableLayoutOptions = {
   columns: 4,
 };
 
-// キャンバス上の配置間隔
-const CELL_W = 260;
-const CELL_H = 260;
-const MARGIN_X = 60;
-const MARGIN_Y = 60;
+// キャンバス上の配置間隔。卓を並べ直すとき store からも使う
+export const CELL_W = 260;
+export const CELL_H = 260;
+export const MARGIN_X = 60;
+export const MARGIN_Y = 60;
 
 export function generateTables(opts: TableLayoutOptions): SeatingTable[] {
   const tables: SeatingTable[] = [];

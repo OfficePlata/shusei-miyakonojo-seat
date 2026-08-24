@@ -109,6 +109,8 @@ function SeatOccupant({
   onSelect?: (a: Attendee) => void;
 }) {
   const style = CATEGORY_STYLES[attendee.category];
+  // TM は卓の顔。ひと目で分かるよう金色で縁取る
+  const isTm = attendee.duties?.includes("tm");
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `att:${attendee.id}`,
     data: { attendeeId: attendee.id, from: "seat" },
@@ -123,7 +125,9 @@ function SeatOccupant({
       className={cn(
         "animate-seat-pop flex size-full flex-col items-center justify-center rounded-full border-2 bg-card px-1 text-center shadow-sm transition-all",
         "cursor-grab touch-none active:cursor-grabbing hover:z-10 hover:scale-105 hover:shadow-md",
-        style.border,
+        isTm
+          ? "border-amber-500 ring-2 ring-amber-300 shadow-md z-[5]"
+          : style.border,
         selected && "ring-2 ring-offset-1 ring-primary z-10 scale-105",
         isOver && "ring-2 ring-primary",
         isDragging && "opacity-30",
@@ -143,6 +147,11 @@ function SeatOccupant({
       {attendee.company && (
         <span className="line-clamp-1 w-full text-[8px] leading-tight text-muted-foreground">
           {attendee.company.replace(/(株式会社|有限会社|合同会社)/g, "")}
+        </span>
+      )}
+      {isTm && (
+        <span className="absolute -left-1.5 -top-1.5 rounded-full bg-amber-500 px-1 py-px text-[8px] font-bold leading-none text-white shadow">
+          TM
         </span>
       )}
       <span className="absolute -right-1 -top-1 flex gap-0.5">
