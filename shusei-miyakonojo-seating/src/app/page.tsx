@@ -65,11 +65,23 @@ export default function Home() {
     // 通信に失敗しても（社外・オフライン）ツールは手元のデータで動く。
     seedIfEmpty();
     setMounted(true);
-    loadMeetingsFromLark().catch((e: unknown) => {
-      toast.error(
-        `例会の一覧を取得できませんでした: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    });
+    loadMeetingsFromLark()
+      .then(() => {
+        // 参加者がまだ手元に無い例会だけ、続けて Lark から読む。
+        // 開いてすぐ名簿と卓割が出るようにするため。
+        // 途中まで並べた下書きがある例会は触らない（勝手に消さない）
+        const s = useStore.getState();
+        const current = s.events.find((e) => e.id === s.currentEventId);
+        if (!current || current.attendees.length > 0) return;
+        return s.loadAttendeesFromLark(current.id).then((n) => {
+          if (n > 0) toast.success(`参加者 ${n}名を読み込みました`);
+        });
+      })
+      .catch((e: unknown) => {
+        toast.error(
+          `Lark から読み込めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
   }, [seedIfEmpty, loadMeetingsFromLark]);
 
   const sensors = useSensors(
