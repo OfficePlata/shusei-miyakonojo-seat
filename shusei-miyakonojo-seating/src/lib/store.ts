@@ -553,24 +553,13 @@ export const useStore = create<StoreState>()(
           }
           mutateCurrent((e) => {
             const { rules } = get();
-            // TM とゲストは卓を動かさない。席順だけ組み直す。
-            // ゲストの紹介者も一緒に残す（2回転目もゲストの隣にいてもらう）
+            // 卓を動かさないのは TM だけ。
+            // ゲストと紹介者は組のまま別の卓へ移ってよい（同卓かどうかは autoAssign が守る）
             const byId = new Map(e.attendees.map((a) => [a.id, a]));
-            const key = (v: string) => v.trim().toLowerCase();
-            const byName = new Map(e.attendees.map((a) => [key(a.name), a]));
-            const stay = new Set<string>();
-            for (const att of e.attendees) {
-              if (att.duties?.includes("tm")) stay.add(att.id);
-              if (att.category !== "guest") continue;
-              stay.add(att.id);
-              const ref = att.referrer ? byName.get(key(att.referrer)) : undefined;
-              if (ref) stay.add(ref.id);
-            }
             const pinnedTables: Record<string, string> = {};
             for (const a of e.assignments) {
-              if (stay.has(a.attendeeId) && byId.has(a.attendeeId)) {
-                pinnedTables[a.attendeeId] = a.tableId;
-              }
+              const att = byId.get(a.attendeeId);
+              if (att?.duties?.includes("tm")) pinnedTables[a.attendeeId] = a.tableId;
             }
             const { assignments } = autoAssign(e.attendees, e.tables, rules, {
               pinnedTables,
