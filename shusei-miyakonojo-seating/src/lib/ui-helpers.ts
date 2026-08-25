@@ -67,21 +67,22 @@ export const CATEGORY_STYLES: Record<VisualCategory, CategoryStyle> = {
   },
   away: {
     label: "他会場",
-    solid: "bg-violet-600 text-white",
-    soft: "bg-violet-50 text-violet-700 border-violet-200",
-    dot: "bg-violet-600",
-    border: "border-violet-500",
-    ring: "ring-violet-500",
-    hex: "#6d4bc4",
-  },
-  staff: {
-    label: "事務局",
     solid: "bg-emerald-600 text-white",
     soft: "bg-emerald-50 text-emerald-700 border-emerald-200",
     dot: "bg-emerald-600",
     border: "border-emerald-500",
     ring: "ring-emerald-500",
-    hex: "#2f9668",
+    hex: "#059669",
+  },
+  // 事務局は緑を他会場へ譲ってグレーへ。実データには今のところ居ない
+  staff: {
+    label: "事務局",
+    solid: "bg-slate-600 text-white",
+    soft: "bg-slate-50 text-slate-700 border-slate-200",
+    dot: "bg-slate-600",
+    border: "border-slate-500",
+    ring: "ring-slate-500",
+    hex: "#475569",
   },
 };
 
