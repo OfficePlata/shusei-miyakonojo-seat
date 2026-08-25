@@ -65,6 +65,8 @@ export function autoAssign(
 
   const assignments: Assignment[] = [];
   const lockedIds = new Set<string>();
+  /** attendeeId -> いま座っている卓。ゲストを紹介者に合流させるのに使う */
+  const placedAt = new Map<string, string>();
 
   // ロックされた席（手動で固定した席）は維持する
   if (opts?.lockedAssignments?.length) {
@@ -77,6 +79,7 @@ export function autoAssign(
       occ.push(att);
       assignments.push({ ...la });
       lockedIds.add(att.id);
+      placedAt.set(att.id, table.id);
     }
   }
 
@@ -104,13 +107,25 @@ export function autoAssign(
     }
   }
 
-  // ゲストの紹介者。ゲストより先に席を決めてからゲストを引き寄せる
-  const referrerNames = new Set(
-    attendees
-      .filter((a) => a.category === "guest" && a.referrer)
-      .map((a) => normalize(a.referrer!)),
-  );
-  const isReferrer = (a: Attendee) => referrerNames.has(normalize(a.name));
+  // ゲストとその紹介者。この2人は必ず同じ卓にする
+  const byName = new Map(attendees.map((a) => [normalize(a.name), a]));
+  /** ゲスト id -> 紹介者（出席していれば） */
+  const referrerOf = new Map<string, Attendee>();
+  for (const g of attendees) {
+    if (g.category !== "guest" || !g.referrer) continue;
+    const ref = byName.get(normalize(g.referrer));
+    if (ref && ref.id !== g.id) referrerOf.set(g.id, ref);
+  }
+  /** 紹介者 id -> 連れてきたゲストたち */
+  const guestsOf = new Map<string, Attendee[]>();
+  for (const [guestId, ref] of referrerOf) {
+    const g = attendees.find((a) => a.id === guestId);
+    if (!g) continue;
+    const arr = guestsOf.get(ref.id);
+    if (arr) arr.push(g);
+    else guestsOf.set(ref.id, [g]);
+  }
+  const isReferrer = (a: Attendee) => guestsOf.has(a.id);
 
   // 配置順：来賓 → TM → ゲストの紹介者 → ゲスト → 分散対象 → 他会場 → 残り
   // 制約のきつい人から先に置くほど、後段の自由度が残って偏りが減る
@@ -148,12 +163,73 @@ export function autoAssign(
     }
     if (!best) return false;
     occupants.get(best.id)!.push(att);
+    placedAt.set(att.id, best.id);
+    return true;
+  };
+
+  /**
+   * ゲストとその紹介者を、必ず同じ卓に入れる。
+   * どちらかが先に座っていれば（紹介者が TM のときなど）その卓へ合流させ、
+   * まだ誰も座っていなければ全員が入る卓を選ぶ。
+   */
+  const placeTogether = (group: Attendee[], candidateTables: SeatingTable[]) => {
+    const need = group.filter((g) => !placedAt.has(g.id));
+    if (need.length === 0) return true;
+
+    const anchor = group.find((g) => placedAt.has(g.id));
+    if (anchor) {
+      const t = tables.find((x) => x.id === placedAt.get(anchor.id));
+      const occ = t ? occupants.get(t.id) : undefined;
+      if (t && occ && occ.length + need.length <= t.capacity) {
+        for (const g of need) {
+          occ.push(g);
+          placedAt.set(g.id, t.id);
+        }
+        return true;
+      }
+      // 席が足りない卓なら、入れられるぶんだけ入れて残りは通常配置に回す
+      if (t && occ) {
+        while (need.length && occ.length < t.capacity) {
+          const g = need.shift()!;
+          occ.push(g);
+          placedAt.set(g.id, t.id);
+        }
+        if (need.length === 0) return true;
+      }
+    }
+
+    let best: SeatingTable | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const t of candidateTables) {
+      const occ = occupants.get(t.id)!;
+      if (occ.length + need.length > t.capacity) continue;
+      const ctx = { frontRank: frontRank.get(t.id) ?? 0, lastRank, metBefore };
+      // グループ全員のスコアの平均で卓を選ぶ
+      const s =
+        need.reduce((acc, g) => acc + scoreTable(g, t, occ, rules, ctx), 0) /
+          need.length +
+        rng() * 3;
+      if (s > bestScore) {
+        bestScore = s;
+        best = t;
+      }
+    }
+    if (!best) return false;
+    for (const g of need) {
+      occupants.get(best.id)!.push(g);
+      placedAt.set(g.id, best.id);
+    }
     return true;
   };
 
   const unassigned: Attendee[] = [];
 
+  const normalTables = tables.filter((t) => t.kind === "normal");
+
   for (const att of order) {
+    // グループ配置で既に座った人は飛ばす
+    if (placedAt.has(att.id)) continue;
+
     let placed = false;
 
     // 卓を指定されている人は、その卓が埋まっていない限り必ずそこへ
@@ -163,7 +239,21 @@ export function autoAssign(
       const occ = t ? occupants.get(t.id) : undefined;
       if (t && occ && occ.length < t.capacity) {
         occ.push(att);
+        placedAt.set(att.id, t.id);
         placed = true;
+      }
+    }
+
+    // ゲストと紹介者は必ず同卓。どちらに先に当たっても2人まとめて置く
+    if (!placed) {
+      const ref = referrerOf.get(att.id);
+      const host = ref ?? att;
+      const guests = guestsOf.get(host.id);
+      if (guests?.length) {
+        const group = [host, ...guests];
+        if (placeTogether(group, normalTables.length ? normalTables : tables)) {
+          continue;
+        }
       }
     }
 
@@ -183,8 +273,7 @@ export function autoAssign(
 
     if (!placed) {
       // 来賓卓は来賓優先。通常は normal 卓へ。空きが無ければ来賓卓も候補に。
-      const normal = tables.filter((t) => t.kind === "normal");
-      placed = place(att, normal.length ? normal : tables);
+      placed = place(att, normalTables.length ? normalTables : tables);
       if (!placed) placed = place(att, tables);
     }
 

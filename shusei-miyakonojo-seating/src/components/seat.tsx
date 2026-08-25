@@ -3,7 +3,7 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import type { Attendee } from "@/lib/types";
-import { CATEGORY_STYLES } from "@/lib/ui-helpers";
+import { CATEGORY_STYLES, visualCategory } from "@/lib/ui-helpers";
 import { Lock, Sparkles, Plus } from "lucide-react";
 import { useStore } from "@/lib/store";
 
@@ -108,7 +108,7 @@ function SeatOccupant({
   isOver?: boolean;
   onSelect?: (a: Attendee) => void;
 }) {
-  const style = CATEGORY_STYLES[attendee.category];
+  const style = CATEGORY_STYLES[visualCategory(attendee)];
   // TM は卓の顔。ひと目で分かるよう金色で縁取る
   const isTm = attendee.duties?.includes("tm");
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({

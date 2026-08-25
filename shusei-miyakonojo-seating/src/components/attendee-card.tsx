@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import type { Attendee } from "@/lib/types";
 import { dutyLabels } from "@/lib/types";
-import { CATEGORY_STYLES } from "@/lib/ui-helpers";
+import { CATEGORY_STYLES, visualCategory } from "@/lib/ui-helpers";
 import { GripVertical, Lock, MapPin, Sparkles, Star } from "lucide-react";
 
 interface Props {
@@ -27,7 +27,7 @@ export function AttendeeCard({
   className,
   onClick,
 }: Props) {
-  const style = CATEGORY_STYLES[attendee.category];
+  const style = CATEGORY_STYLES[visualCategory(attendee)];
 
   return (
     <div

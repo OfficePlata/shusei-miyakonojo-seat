@@ -3,8 +3,8 @@
 import { useMemo } from "react";
 import { useStore, useCurrentEvent } from "@/lib/store";
 import type { Attendee } from "@/lib/types";
-import { CATEGORY_ORDER } from "@/lib/types";
-import { CATEGORY_STYLES } from "@/lib/ui-helpers";
+import { CATEGORY_ORDER, isHomeVenue } from "@/lib/types";
+import { CATEGORY_STYLES, VISUAL_ORDER, visualCategory } from "@/lib/ui-helpers";
 import { evaluateSeating } from "@/lib/auto-assign";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,7 +131,7 @@ export function InspectorPanel({ onEditAttendee }: Props) {
             凡例
           </div>
           <div className="grid grid-cols-2 gap-1.5">
-            {CATEGORY_ORDER.map((c) => (
+            {VISUAL_ORDER.map((c) => (
               <div key={c} className="flex items-center gap-1.5 text-xs">
                 <span
                   className={cn("size-3 rounded-full", CATEGORY_STYLES[c].dot)}
@@ -202,7 +202,7 @@ function AttendeeInspector({
   const event = useCurrentEvent();
   const unassign = useStore((s) => s.unassign);
   const toggleLock = useStore((s) => s.toggleLock);
-  const style = CATEGORY_STYLES[attendee.category];
+  const style = CATEGORY_STYLES[visualCategory(attendee)];
 
   const assignment = event?.assignments.find(
     (a) => a.attendeeId === attendee.id,
@@ -243,6 +243,7 @@ function AttendeeInspector({
           }
         />
         {attendee.notes && <Row label="備考" value={attendee.notes} />}
+        <Row label="会場" value={venueLabel(attendee)} />
       </dl>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -364,7 +365,7 @@ function TableInspector({ tableId }: { tableId: string }) {
               <span
                 className={cn(
                   "size-2 rounded-full",
-                  CATEGORY_STYLES[attendee.category].dot,
+                  CATEGORY_STYLES[visualCategory(attendee)].dot,
                 )}
               />
               <button
@@ -414,4 +415,12 @@ function Row({ label, value }: { label: string; value?: string }) {
       <dd className="min-w-0 flex-1 font-medium">{value}</dd>
     </div>
   );
+}
+
+/** 所属会場の表示。他会場は会場名、自会場とゲストはその旨を出す */
+function venueLabel(a: Attendee): string {
+  if (a.category === "guest") return "ゲスト";
+  const v = (a.venue ?? "").trim();
+  if (!v || isHomeVenue(a)) return "都城（自会場）";
+  return v;
 }
