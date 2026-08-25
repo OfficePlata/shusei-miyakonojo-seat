@@ -172,10 +172,11 @@
   .print-area {
     padding: 0 !important;
   }
-  /* 卓グリッドは常に 4 列（A4/A3 いずれもバランスよく） */
+  /* 卓グリッドは常に 4 列。卓の表は手本と同じ固定幅なので列も内容幅に合わせる */
   .print-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    gap: 4px !important;
+    grid-template-columns: repeat(4, max-content) !important;
+    gap: 2px !important;
+    justify-content: start !important;
   }
   .print-break {
     break-after: page;

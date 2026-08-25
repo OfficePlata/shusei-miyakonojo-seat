@@ -26,12 +26,19 @@ const PAPERS = {
 } as const;
 type Paper = keyof typeof PAPERS;
 
+/**
+ * 卓の表の列幅（px）。世話人が使っている手本の座席表と同じ寸法にしてある。
+ * 卓ひとつで 30+30+104+104+104 = 372px、横に4卓で 1488px。A3ヨコにそのまま収まる。
+ */
+const COL = { tableNo: 30, no: 30, venue: 104, name: 104, duty: 104 } as const;
+const CARD_W = COL.tableNo + COL.no + COL.venue + COL.name + COL.duty;
+
 export function PrintView({ open, onClose }: Props) {
   const event = useCurrentEvent();
   const rotation = useStore((s) => s.activeRotation);
   const areaRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
-  const [paper, setPaper] = useState<Paper>("a4");
+  const [paper, setPaper] = useState<Paper>("a3");
   const [fitOnePage, setFitOnePage] = useState(true);
   const [scale, setScale] = useState(1);
 
@@ -183,7 +190,7 @@ export function PrintView({ open, onClose }: Props) {
             className="print-scale origin-top-left"
             style={{ width: innerW, transform: `scale(${scale})` }}
           >
-            <div ref={areaRef} className="print-area bg-white p-6">
+            <div ref={areaRef} className="print-area bg-white p-3">
           {/* ヘッダー */}
           <div className="mb-3 flex items-end justify-between border-b-2 border-neutral-800 pb-2">
             <div>
@@ -193,12 +200,7 @@ export function PrintView({ open, onClose }: Props) {
                 className="mb-1 h-5 w-auto object-contain grayscale"
               />
               <h1 className="font-brand text-2xl font-bold text-neutral-900">
-                {event.title}　座席表
-                {rotation === 2 && (
-                  <span className="ml-2 rounded border border-neutral-400 px-1.5 py-0.5 align-middle text-sm font-bold">
-                    2回転目
-                  </span>
-                )}
+                {event.title}　座席表　{rotation === 1 ? "1回目" : "2回目"}
               </h1>
               <p className="mt-0.5 text-xs text-neutral-600">
                 {formatEventDate(event.date)}　会場：{event.venue}
@@ -223,13 +225,14 @@ export function PrintView({ open, onClose }: Props) {
             </div>
           </div>
 
-          {/* ステージ表示 */}
-          <div className="mb-2 border-y border-neutral-300 bg-neutral-100 py-1 text-center text-[11px] font-bold tracking-widest text-neutral-700">
-            ▲ 会場前方（ステージ・演台）
-          </div>
-
           {/* テーブルカード */}
-          <div className="print-grid grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          <div
+            className="print-grid grid gap-0.5"
+            style={{
+              gridTemplateColumns: `repeat(4, ${CARD_W}px)`,
+              justifyContent: "start",
+            }}
+          >
             {orderedTables.map((t) => (
               <TableCard
                 key={t.id}
@@ -279,22 +282,24 @@ export function PrintView({ open, onClose }: Props) {
   );
 }
 
-/** 会場列の表示：ゲストは「ゲスト」、他会場の会員はその会場名、自会場（都城）会員は空欄 */
+/**
+ * 会場列：ゲストは「ゲスト」、他会場はその会場名、自会場（都城）は空欄。
+ * 幅が限られるので「〇〇会場」の「会場」は落とす（沖縄北部やんばる会場 → 沖縄北部やんばる）
+ */
 function venueCell(att: Attendee): string {
   if (att.category === "guest") return "ゲスト";
   const v = (att.venue ?? "").trim();
-  if (!v || v === "都城") return "";
-  return v;
+  if (!v || /都城|自会場/.test(v)) return "";
+  return v.replace(/会場$/, "");
 }
 
-/** 備考列の表示：役割（TM/受付…）＋役職＋ゲストは紹介者＋自由備考 をまとめる */
+/**
+ * 役割列：ゲストは紹介者の名前、会員は当日の役割（TM・受付・ブースなど）。
+ * 手本の座席表に合わせ、世話人の役職と事業案内はここに出さない（列に収まらない）
+ */
 function remarksCell(att: Attendee): string {
-  const parts: string[] = [];
-  parts.push(...dutyLabels(att.duties));
-  if (att.role) parts.push(att.role);
-  if (att.category === "guest" && att.referrer) parts.push(att.referrer);
-  if (att.notes) parts.push(att.notes);
-  return parts.join("・");
+  if (att.category === "guest") return att.referrer ?? "";
+  return dutyLabels(att.duties).join("・");
 }
 
 function TableCard({
@@ -306,29 +311,32 @@ function TableCard({
 }) {
   const isHead = table.kind === "head";
   const count = seats.size;
-  // 手本に合わせ、最低10行（席数が多い場合は席数分）まで枠を出す
+  // 手本に合わせ、最低10行（席数が多い場合は席数分）まで枠を出す。
+  // 空行は当日の飛び込みを書き込む欄になる
   const rows = Math.max(table.capacity, 10);
 
   return (
     <div
       className={cn(
-        "flex break-inside-avoid overflow-hidden rounded border",
-        isHead ? "border-amber-400" : "border-neutral-400",
+        "flex break-inside-avoid overflow-hidden border",
+        isHead ? "border-amber-400" : "border-neutral-500",
       )}
+      style={{ width: CARD_W }}
     >
       {/* 左：卓番号の縦帯 */}
       <div
         className={cn(
-          "flex w-8 shrink-0 flex-col items-center justify-center gap-1 border-r px-0.5 text-center",
+          "flex shrink-0 flex-col items-center justify-center gap-0.5 border-r text-center",
           isHead
             ? "border-amber-400 bg-amber-100 text-amber-800"
-            : "border-neutral-400 bg-neutral-100 text-neutral-700",
+            : "border-neutral-500 bg-neutral-200 text-neutral-800",
         )}
+        style={{ width: COL.tableNo }}
       >
         {isHead ? (
           <Crown className="size-4" />
         ) : (
-          <span className="font-brand text-lg font-bold leading-none">
+          <span className="font-brand text-base font-bold leading-none">
             {table.name}
           </span>
         )}
@@ -337,21 +345,27 @@ function TableCard({
         </span>
       </div>
 
-      {/* 右：席の明細テーブル */}
-      <table className="w-full table-fixed border-collapse text-[10px]">
+      {/* 右：席の明細テーブル。列幅は手本の座席表に合わせて固定 */}
+      <table className="table-fixed border-collapse text-[11px] leading-tight">
+        <colgroup>
+          <col style={{ width: COL.no }} />
+          <col style={{ width: COL.venue }} />
+          <col style={{ width: COL.name }} />
+          <col style={{ width: COL.duty }} />
+        </colgroup>
         <thead>
-          <tr className="bg-neutral-100 text-neutral-600">
-            <th className="w-5 border-b border-neutral-300 py-0.5 font-semibold">
+          <tr className="bg-neutral-200 text-neutral-800">
+            <th className="border-b border-neutral-500 py-0.5 text-[10px] font-bold">
               No.
             </th>
-            <th className="w-9 border-b border-l border-neutral-300 py-0.5 font-semibold">
+            <th className="border-b border-l border-neutral-500 py-0.5 text-[10px] font-bold">
               会場
             </th>
-            <th className="border-b border-l border-neutral-300 py-0.5 font-semibold">
+            <th className="border-b border-l border-neutral-500 py-0.5 text-[10px] font-bold">
               氏名
             </th>
-            <th className="w-12 border-b border-l border-neutral-300 py-0.5 font-semibold">
-              備考
+            <th className="border-b border-l border-neutral-500 py-0.5 text-[10px] font-bold">
+              役割
             </th>
           </tr>
         </thead>
@@ -368,13 +382,13 @@ function TableCard({
                   !att && "text-neutral-300",
                 )}
               >
-                <td className="border-b border-neutral-200 text-center font-semibold text-neutral-500">
+                <td className="h-5 border-b border-dotted border-neutral-400 text-center text-[10px] font-semibold text-neutral-500">
                   {i + 1}
                 </td>
-                <td className="truncate border-b border-l border-neutral-200 px-0.5 text-center text-[9px] text-neutral-600">
+                <td className="h-5 overflow-hidden whitespace-nowrap border-b border-l border-dotted border-neutral-400 px-1 text-center text-[10px] text-neutral-700">
                   {att ? venueCell(att) : ""}
                 </td>
-                <td className="truncate border-b border-l border-neutral-200 px-1">
+                <td className="h-5 overflow-hidden whitespace-nowrap border-b border-l border-dotted border-neutral-400 px-1 text-center">
                   {att ? (
                     <span className="font-bold text-neutral-900">
                       {att.name}
@@ -388,7 +402,7 @@ function TableCard({
                     ""
                   )}
                 </td>
-                <td className="truncate border-b border-l border-neutral-200 px-0.5 text-center text-[9px] text-neutral-600">
+                <td className="h-5 overflow-hidden whitespace-nowrap border-b border-l border-dotted border-neutral-400 px-1 text-center text-[10px] text-neutral-700">
                   {att ? remarksCell(att) : ""}
                 </td>
               </tr>
