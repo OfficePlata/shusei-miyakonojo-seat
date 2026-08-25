@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useStore, useCurrentEvent } from "@/lib/store";
 import { DEFAULT_LAYOUT, TableLayoutOptions } from "@/lib/events";
-import { AlertTriangle, LayoutGrid } from "lucide-react";
+import { AlertTriangle, LayoutGrid, Rows4 } from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -26,6 +26,7 @@ interface Props {
 export function TableConfigDialog({ open, onOpenChange }: Props) {
   const event = useCurrentEvent();
   const regenerate = useStore((s) => s.regenerateTables);
+  const arrangeTables = useStore((s) => s.arrangeTables);
   const [opts, setOpts] = useState<TableLayoutOptions>(DEFAULT_LAYOUT);
 
   useEffect(() => {
@@ -37,7 +38,8 @@ export function TableConfigDialog({ open, onOpenChange }: Props) {
         seatsPerTable: normal[0]?.capacity ?? DEFAULT_LAYOUT.seatsPerTable,
         includeHeadTable: !!head,
         headTableSeats: head?.capacity ?? DEFAULT_LAYOUT.headTableSeats,
-        columns: DEFAULT_LAYOUT.columns,
+        columns:
+          new Set(normal.map((t) => t.x)).size || DEFAULT_LAYOUT.columns,
       });
     }
   }, [open, event]);
@@ -121,6 +123,20 @@ export function TableConfigDialog({ open, onOpenChange }: Props) {
             <p className="text-xs text-muted-foreground">
               作成後もテーブルは自由に移動できます。
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full gap-1.5"
+              onClick={() => {
+                arrangeTables(opts.columns);
+                toast.success(`卓を横${opts.columns}列に並べ直しました`);
+                onOpenChange(false);
+              }}
+            >
+              <Rows4 className="size-4" />
+              いまの卓をこの列数で並べ直す（席はそのまま）
+            </Button>
           </div>
 
           <div className="flex items-center justify-between rounded-lg border bg-secondary/40 px-3 py-2.5">
