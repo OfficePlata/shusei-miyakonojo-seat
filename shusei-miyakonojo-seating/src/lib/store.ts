@@ -235,9 +235,11 @@ export const useStore = create<StoreState>()(
               events: state.events.map((e) => {
                 if (e.id !== id) return e;
                 count = data.attendees.length;
+                // Lark に配置が無い例会は手元の下書きを使う。ただし来賓席は使わない運用なので、
+                // 既定が来賓席つきだった頃の下書きに残っている来賓席は外す（2026-10-11）
                 const tables = data.layout?.tables?.length
                   ? data.layout.tables
-                  : e.tables;
+                  : e.tables.filter((t) => t.kind !== "head");
                 // 割当は Lark 側にあるものだけを残す。
                 // 参加者が取り消して居なくなった人の割当が残ると、
                 // 存在しない人が卓に座り続ける
@@ -553,18 +555,23 @@ export const useStore = create<StoreState>()(
           }
           mutateCurrent((e) => {
             const { rules } = get();
-            // 卓を動かさないのは TM だけ。
-            // ゲストと紹介者は組のまま別の卓へ移ってよい（同卓かどうかは autoAssign が守る）
+            // 卓を動かさないのは TM とゲスト。受付で伝えた卓にゲストは留まる。
+            // 紹介者は固定しないので、2回転目はゲストの隣が入れ替わる
             const byId = new Map(e.attendees.map((a) => [a.id, a]));
             const pinnedTables: Record<string, string> = {};
             for (const a of e.assignments) {
               const att = byId.get(a.attendeeId);
-              if (att?.duties?.includes("tm")) pinnedTables[a.attendeeId] = a.tableId;
+              if (att?.duties?.includes("tm") || att?.category === "guest") {
+                pinnedTables[a.attendeeId] = a.tableId;
+              }
             }
-            const { assignments } = autoAssign(e.attendees, e.tables, rules, {
-              pinnedTables,
-              previousAssignments: e.assignments,
-            });
+            const { assignments } = autoAssign(
+              e.attendees,
+              e.tables,
+              // ゲストと紹介者の同卓は1回転目だけ。2回転目は紹介者も他の人と同じに扱う
+              { ...rules, keepGuestNearReferrer: false },
+              { pinnedTables, previousAssignments: e.assignments },
+            );
             // 作った2回転目をそのまま表示に回し、1回転目を控えへ
             return { ...e, assignments: assignments, assignments2: e.assignments };
           });

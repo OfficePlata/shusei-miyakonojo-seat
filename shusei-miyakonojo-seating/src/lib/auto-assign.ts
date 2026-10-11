@@ -244,8 +244,9 @@ export function autoAssign(
       }
     }
 
-    // ゲストと紹介者は必ず同卓。どちらに先に当たっても2人まとめて置く
-    if (!placed) {
+    // ゲストと紹介者は必ず同卓。どちらに先に当たっても2人まとめて置く。
+    // 2回転目はこの規則を切って呼ぶので、紹介者も他の人と同じように入れ替わる
+    if (!placed && rules.keepGuestNearReferrer) {
       const ref = referrerOf.get(att.id);
       const host = ref ?? att;
       const guests = guestsOf.get(host.id);

@@ -65,7 +65,8 @@ export interface TableLayoutOptions {
 export const DEFAULT_LAYOUT: TableLayoutOptions = {
   tableCount: 12,
   seatsPerTable: 8,
-  includeHeadTable: true,
+  // 都城の例会では来賓席を使わない（2026-10-11 確認）。必要な回だけ「卓の設定」で足す
+  includeHeadTable: false,
   headTableSeats: 6,
   columns: 4,
 };
