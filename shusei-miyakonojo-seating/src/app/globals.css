@@ -148,6 +148,11 @@
   .no-print {
     display: none !important;
   }
+  /* layout.tsx が読み込む react-grab の全面レイヤー。印刷すると透明つきの全面画像として
+     PDF に焼き込まれ、複合機事故の原因（SMask）になる（PDF_PRINT_SAFE_RULES.md §2。2026-10-11 実測） */
+  .ph-no-capture {
+    display: none !important;
+  }
   /* 印刷プレビュー表示中は本体を隠す */
   body.print-mode .app-workspace {
     display: none !important;

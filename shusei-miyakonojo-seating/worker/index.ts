@@ -55,6 +55,30 @@ type Attendee = {
   role: string
   /** 事業案内の原文。卓割では使わないが画面で参考になる */
   notes: string
+  /**
+   * 受付名簿・冊子用一覧（元データの紙）に出す値。卓割では使わない。
+   * 9月例会で、別に作った名簿と座席表の卓番号が食い違って参加者を戸惑わせたため、
+   * 名簿も座席表と同じデータからこのツールで刷る。
+   */
+  sheet: RosterSheetInfo
+}
+
+type RosterSheetInfo = {
+  /** 守成の会員種別（代表・副代表・世話人・一般）。ゲストは空 */
+  memberType: string
+  /** 会員分類＝バッジの色（ゴールド・赤・緑）。ゲストは空 */
+  badge: string
+  business: string
+  /** 二次会（二部会）。'参加予定' / 'しない' / 空 */
+  afterParty: string
+  booth: boolean
+  flyer: boolean
+  negotiation: boolean
+  /**
+   * 名簿の「紹介者」。会員の入会時の紹介者（自会場は会員データ_最新、他会場は出欠記録）と、
+   * ゲストを連れてきた会員の両方が入る。Attendee.referrer はゲストの同卓判定に使うので分けて持つ
+   */
+  referrer: string
 }
 
 const json = (data: unknown, status = 200): Response =>
@@ -131,6 +155,16 @@ async function loadAttendees(
       duties,
       role: '',
       notes: '',
+      sheet: {
+        memberType: fieldText(r.fields[ATTENDANCE_FIELDS.memberType]),
+        badge: fieldText(r.fields[ATTENDANCE_FIELDS.badge]),
+        business: fieldText(r.fields[ATTENDANCE_FIELDS.business]),
+        afterParty: fieldText(r.fields[ATTENDANCE_FIELDS.afterParty]),
+        booth: duties.includes('booth'),
+        flyer: duties.includes('flyer'),
+        negotiation: fieldText(r.fields[ATTENDANCE_FIELDS.negotiation]) === 'する',
+        referrer: fieldText(r.fields[ATTENDANCE_FIELDS.referrer]),
+      },
     })
 
     seats[r.record_id] = {
@@ -139,8 +173,16 @@ async function loadAttendees(
     }
   }
 
-  attendees.sort((a, b) => (a.kana || a.name).localeCompare(b.kana || b.name, 'ja'))
-  return { attendees, seats }
+  // 本部の出欠では、会員が連れてきたゲストが「自会場」にも重ねて載ることがある
+  // （令和8年10月例会の宮持 利和さん）。同名がゲストに居れば自会場の行を落とす。
+  // 残すと名簿に2回載り、席も2つ取られる。ポータル（src/routes/api.ts dropGuestShadows）も同じ扱い
+  const guestKeys = new Set(attendees.filter((a) => a.category === 'guest').map((a) => nameKey(a.name)))
+  const deduped = attendees.filter(
+    (a) => !(a.category === 'member' && !a.venue && guestKeys.has(nameKey(a.name))),
+  )
+
+  deduped.sort((a, b) => (a.kana || a.name).localeCompare(b.kana || b.name, 'ja'))
+  return { attendees: deduped, seats }
 }
 
 /**
@@ -154,6 +196,9 @@ async function fillFromRoster(env: Bindings, attendees: Attendee[]): Promise<voi
     '会社名 (団体名)',
     '事業案内',
     '業種',
+    '会員種別',
+    '会員分類',
+    '紹介者',
   ])
   const roster = new Map(members.map((m) => [nameKey(fieldText(m.fields['氏名'])), m.fields]))
 
@@ -165,6 +210,11 @@ async function fillFromRoster(env: Bindings, attendees: Attendee[]): Promise<voi
       a.notes ||= fieldText(f['事業案内'])
       // 人が入れた業種が最優先。「椿」のように屋号からは夜の店と分からない会員はここで直す
       a.industry ||= fieldText(f['業種'])
+      // 名簿の「守成役職」「バッチ」「事業案内」。自会場は会員データ_最新が正
+      a.sheet.memberType ||= fieldText(f['会員種別'])
+      a.sheet.badge ||= fieldText(f['会員分類'])
+      a.sheet.business ||= fieldText(f['事業案内'])
+      a.sheet.referrer ||= fieldText(f['紹介者'])
     }
     // 業種が空なら事業案内と会社名から起こす。
     // 他会場・ゲストは会員データに行が無いので、会社名だけが手がかりになる

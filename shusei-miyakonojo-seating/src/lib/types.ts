@@ -81,6 +81,26 @@ export interface Attendee {
   /** 一緒に座らせたい相手 / 離したい相手（attendee id の配列） */
   keepWith?: string[];
   keepApart?: string[];
+  /**
+   * 受付名簿・冊子用一覧に出す値（Lark から読み込んだ人だけが持つ）。卓割には使わない。
+   * 名簿を座席表と同じデータから刷り、卓番号の食い違いを無くすためのもの
+   */
+  sheet?: RosterSheetInfo;
+}
+
+export interface RosterSheetInfo {
+  /** 守成の会員種別（代表・副代表・世話人・一般）。ゲストは空 */
+  memberType: string;
+  /** 会員分類＝バッジの色（ゴールド・赤・緑）。ゲストは空 */
+  badge: string;
+  business: string;
+  /** 二次会（二部会）。'参加予定' / 'しない' / 空 */
+  afterParty: string;
+  booth: boolean;
+  flyer: boolean;
+  negotiation: boolean;
+  /** 名簿の紹介者（会員の入会時の紹介者／ゲストを連れてきた会員） */
+  referrer: string;
 }
 
 /* ------------------------------------------------------------

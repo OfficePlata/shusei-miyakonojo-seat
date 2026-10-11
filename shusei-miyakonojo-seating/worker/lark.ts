@@ -56,6 +56,14 @@ export const ATTENDANCE_FIELDS = {
   flyer: 'チラシPR',
   tableNo: 'テーブル番号',
   seatNo: '席番号',
+  // 受付名簿・冊子用一覧（src/components/roster-sheets.tsx）だけが使う。卓割には使わない
+  afterParty: '二次会',
+  negotiation: '商談報告',
+  // 事業案内は他会場・ゲストのみ。自会場は会員データ_最新が正
+  business: '事業案内',
+  // 2026-10-11 追加。他会場のみ（本部シート由来）。自会場は会員データ_最新が正
+  memberType: '会員種別',
+  badge: '会員分類',
 } as const
 
 // ポータルと同じ KV namespace を共有しているのでキーを分ける
