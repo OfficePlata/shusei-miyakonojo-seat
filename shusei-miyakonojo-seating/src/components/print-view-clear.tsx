@@ -1,47 +1,59 @@
 "use client";
 
-import type { Attendee, SeatingTable } from "@/lib/types";
+import type { Attendee, Duty, SeatingTable } from "@/lib/types";
 import type { useCurrentEvent } from "@/lib/store";
 import { formatEventDate } from "@/lib/ui-helpers";
-import { remarksCell, venueCell } from "@/components/print-view";
 
 /**
  * 座席表の「見やすいデザイン」。印刷画面のツールバーで「これまでのデザイン」と切り替える。
  *
- * 載せる項目（No.・会場・氏名・役割、凡例、未着席）は、これまでのデザインと**同じ**。
- * 見た目だけを、ポータルの印刷物（sewaninja-portal の「見やすい版」）と同じ意匠にそろえている。
+ * 見本は「座席表_9月例会_見やすい版.pdf」（2026-10-11 受領）:
+ * - 卓は横7列。紺の帯に大きな卓番号と人数
+ * - 中身は 席番号・氏名・役割の札 だけ。空席の行は出さない（行は卓の高さいっぱいに均等に広げる）
+ * - ゲストの行は淡いピンク、名前の下に「紹介：〇〇」。他会場は名前の下に「宮崎から参加」
+ * - 1回目は青、2回目は橙の札。余ったマスに「見かた」
  *
  * PDF_PRINT_SAFE_RULES.md に合わせて、次は使わない:
- * グラデーション / 影 / 半透明（Tailwind の `/70` なども含む）/ 破線・点線 / SVG アイコン /
+ * グラデーション / 影 / 半透明 / 破線・点線（見本の凡例の破線は淡い実線にした）/ SVG アイコン /
  * 角丸＋overflow:hidden の組み合わせ。色はすべて不透明の16進で書く。
  */
 
 type CurrentEvent = NonNullable<ReturnType<typeof useCurrentEvent>>;
 
-/** 卓ひとつの幅は、これまでのデザインと同じ 372px（A3ヨコに4卓が原寸で並ぶ寸法） */
-export const CLEAR_CARD_W = 372;
-/** 枠線1px を左右から引いた残り（370px）を4列に配る */
-const COL = { no: 26, venue: 94, name: 140, duty: 110 } as const;
-/**
- * 行の高さ。これまでのデザイン（20px）より1px低い。卓の帯が増えたぶんをここで吸収し、
- * 13卓（4段）が**縮小前の寸法で** A3ヨコ1ページに収まるようにしている。
- * 「1ページに収める」は見た目を縮めるだけで、印刷のページ割りは縮小前の高さで決まるため、
- * 縮小前に溢れると4段目が2ページ目へ送られる（2026-10-11 実測）。
- */
-const ROW_H = 19;
+/** 横に並べる卓の数。A3ヨコで1卓あたり約210px */
+const COLS = 7;
 
 const C = {
-  shu: "#c8102e",
-  kinDeep: "#b28f2b",
-  kuroko: "#1f1d1b",
-  shuLine: "#e5a3ae",
-  kinLine: "#d9c27f",
-  kinPale: "#fbf6e9",
-  line: "#e0d9cd",
-  th: "#f1ece3",
-  guest: "#e9e4db",
-  sub: "#6b6762",
+  ink: "#1f2430",
+  navy: "#1e2533",
+  sub: "#6b7280",
+  faint: "#9ca3af",
+  line: "#e3e6eb",
+  cardLine: "#c9ced8",
+  guestBg: "#fdeef3",
+  other: "#1d4ed8",
+  legendBg: "#f6f7f9",
 } as const;
+
+/** 役割の札。色だけでなく文字でも分かるようにしている（モノクロ印刷でも読める） */
+const BADGE: Record<string, { label: string; bg: string }> = {
+  tm: { label: "TM", bg: "#1e2533" },
+  mc: { label: "司会", bg: "#0f766e" },
+  reception: { label: "受付", bg: "#2f855a" },
+  booth: { label: "ブース", bg: "#dd6b20" },
+  flyer: { label: "チラシ", bg: "#6b46c1" },
+  negotiation: { label: "商談", bg: "#2563eb" },
+  guest: { label: "ゲスト", bg: "#d53f7f" },
+};
+const BADGE_ORDER: (Duty | "guest")[] = ["tm", "mc", "reception", "booth", "flyer", "negotiation", "guest"];
+
+/** 「宮崎会場」→「宮崎から参加」。他会場の人だけ */
+function otherVenueNote(a: Attendee): string {
+  if (a.category === "guest") return "";
+  const v = (a.venue ?? "").trim();
+  if (!v || /都城|自会場/.test(v)) return "";
+  return `${v.replace(/会場$/, "")}から参加`;
+}
 
 export function ClearSheet({
   event,
@@ -56,223 +68,179 @@ export function ClearSheet({
   seatMap: Map<string, Map<number, Attendee>>;
   unseated: Attendee[];
 }) {
+  const second = rotation !== 1;
+  const seated = event.assignments.length;
+
   return (
-    <div style={{ color: C.kuroko }}>
-      {/* 用紙の頭：明朝の大見出し＋右上に大きな数字 */}
+    <div style={{ color: C.ink }}>
+      {/* 用紙の頭 */}
       <div
         className="mb-3 flex items-end justify-between gap-4 pb-2"
-        style={{ borderBottom: `2px solid ${C.kuroko}` }}
+        style={{ borderBottom: `2px solid ${C.ink}` }}
       >
         <div>
-          <p className="text-[11px] font-semibold" style={{ color: C.sub }}>
-            守成クラブ 都城会場
-          </p>
-          <h1 className="font-brand flex items-center gap-3 text-[28px] font-bold leading-tight tracking-wide">
+          <h1 className="flex items-center gap-3 text-[28px] font-bold leading-tight tracking-wide">
             <span>{event.title}　座席表</span>
             <span
-              className="rounded-full px-3 py-0.5 font-sans text-sm font-bold"
-              style={{ background: C.shu, color: "#fff" }}
+              className="rounded px-3 py-0.5 text-[20px] font-bold"
+              style={{ background: second ? "#c2410c" : "#1d5fbf", color: "#fff" }}
             >
-              {rotation === 1 ? "1回目" : "2回目"}
+              {second ? "2回目" : "1回目"}
             </span>
           </h1>
-          <p className="mt-0.5 text-xs" style={{ color: C.sub }}>
+          <p className="mt-1 text-xs" style={{ color: C.sub }}>
             {formatEventDate(event.date)}　会場：{event.venue}
           </p>
         </div>
-
-        <div className="flex items-end gap-5">
-          {/* モノクロ印刷でも読めるよう、凡例は色と文字の両方で示す */}
-          <div className="flex flex-col items-end gap-1 text-[11px]" style={{ color: C.sub }}>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-3 w-5 rounded-sm"
-                style={{ background: C.guest, border: `1px solid ${C.line}` }}
-              />
-              ゲスト
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <FirstBadge />
-              初参加
-            </span>
-          </div>
-          <Stat label="出席" value={event.attendees.length} />
-          <Stat label="着席" value={event.assignments.length} />
-        </div>
+        <p className="text-sm" style={{ color: C.sub }}>
+          出席 <b className="text-[22px]" style={{ color: C.ink }}>{event.attendees.length}</b>名 ／ 着席{" "}
+          <b className="text-[22px]" style={{ color: C.ink }}>{seated}</b>名　・　全{tables.length}テーブル
+        </p>
       </div>
 
-      {/* 卓の並び。これまでと同じ4卓・同じ幅（A3ヨコで原寸） */}
+      {/* 卓。行ごとに高さがそろい、各卓の中は人数ぶんの行が均等に広がる */}
       <div
-        className="print-grid-clear grid"
-        style={{ gridTemplateColumns: `repeat(4, ${CLEAR_CARD_W}px)`, gap: 4 }}
+        className="grid"
+        style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`, gap: 10 }}
       >
         {tables.map((t) => (
-          <ClearTableCard key={t.id} table={t} seats={seatMap.get(t.id) ?? new Map()} />
+          <TableCard key={t.id} table={t} seats={seatMap.get(t.id) ?? new Map()} />
         ))}
+        <Legend />
       </div>
 
-      {/* 未着席。黒い縦線の小見出し＋淡い金の札（破線・半透明は使わない） */}
       {unseated.length > 0 && (
-        <div className="mt-4">
-          <h2
-            className="mb-1.5 flex items-baseline gap-2 pl-2 text-sm font-bold"
-            style={{ borderLeft: `4px solid ${C.kuroko}` }}
-          >
-            未着席
-            <span className="text-xs font-normal" style={{ color: C.sub }}>
-              {unseated.length}名
-            </span>
-          </h2>
-          <div className="flex flex-wrap gap-1.5">
-            {unseated.map((a) => (
-              <span
-                key={a.id}
-                className="rounded px-2 py-0.5 text-xs"
-                style={{
-                  background: a.category === "guest" ? C.guest : C.kinPale,
-                  border: `1px solid ${C.kinLine}`,
-                }}
-              >
-                {a.name}
-              </span>
-            ))}
-          </div>
+        <div className="mt-3" style={{ breakInside: "avoid" }}>
+          <p className="mb-1 text-sm font-bold">
+            未着席 <span style={{ color: C.sub }}>{unseated.length}名</span>
+          </p>
+          <p className="text-xs leading-relaxed">{unseated.map((a) => a.name).join("　")}</p>
         </div>
       )}
-
-      <div
-        className="mt-5 flex justify-between pt-1.5 text-[10px]"
-        style={{ borderTop: `1px solid ${C.line}`, color: C.sub }}
-      >
-        <span>守成クラブ 都城会場　座席表メーカー</span>
-        <span>作成日：{new Date().toLocaleDateString("ja-JP")}</span>
-      </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function TableCard({ table, seats }: { table: SeatingTable; seats: Map<number, Attendee> }) {
+  const people = [...seats.entries()].sort((a, b) => a[0] - b[0]);
+
   return (
-    <div className="text-right leading-none">
-      <div className="mb-1 text-[11px]" style={{ color: C.sub }}>
-        {label}
+    <div
+      className="flex flex-col rounded-md bg-white"
+      style={{ border: `1px solid ${C.cardLine}`, breakInside: "avoid", minHeight: 300 }}
+    >
+      {/* 紺の帯。角は帯そのものを丸める（親で切り抜かない） */}
+      <div
+        className="flex items-end justify-between rounded-t-[5px] px-2.5 pb-1 pt-0.5"
+        style={{ background: C.navy, color: "#fff" }}
+      >
+        <span className="flex items-baseline gap-1">
+          <span className="text-[30px] font-bold leading-none tabular-nums">{table.name}</span>
+          <span className="text-[11px]">テーブル</span>
+        </span>
+        <span className="text-[11px]">{people.length}名</span>
       </div>
-      <span className="text-[30px] font-bold tabular-nums" style={{ color: C.shu }}>
-        {value}
-      </span>
-      <span className="ml-0.5 text-xs">名</span>
+
+      <div className="flex flex-1 flex-col">
+        {people.map(([seat, a], i) => (
+          <Row key={a.id} seatNo={seat + 1} a={a} last={i === people.length - 1} />
+        ))}
+      </div>
     </div>
   );
 }
 
-function FirstBadge() {
+function Row({ seatNo, a, last }: { seatNo: number; a: Attendee; last: boolean }) {
+  const guest = a.category === "guest";
+  const sub = guest ? (a.referrer ? `紹介：${a.referrer}` : "") : otherVenueNote(a);
+  const badges = BADGE_ORDER.filter((k) =>
+    k === "guest" ? guest : (a.duties ?? []).includes(k as Duty),
+  );
+
+  return (
+    <div
+      className="flex flex-1 items-center gap-1.5 px-2 py-1"
+      style={{
+        background: guest ? C.guestBg : undefined,
+        borderBottom: last ? undefined : `1px solid ${C.line}`,
+        minHeight: 34,
+      }}
+    >
+      <span className="w-3 shrink-0 text-right text-[10px]" style={{ color: C.faint }}>
+        {seatNo}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] font-bold leading-tight">
+          {a.name}
+          {a.isFirstTime && <span className="ml-1 text-[10px]" style={{ color: "#c2410c" }}>初</span>}
+        </span>
+        {sub && (
+          <span
+            className="block truncate text-[9.5px] leading-tight"
+            style={{ color: guest ? C.sub : C.other }}
+          >
+            {sub}
+          </span>
+        )}
+      </span>
+      {badges.length > 0 && (
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          {badges.map((k) => (
+            <Badge key={k} kind={k} />
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Badge({ kind }: { kind: string }) {
+  const b = BADGE[kind];
+  if (!b) return null;
   return (
     <span
-      className="inline-block rounded-sm px-1 text-[8px] font-bold leading-[13px]"
-      style={{ background: C.shu, color: "#fff" }}
+      className="rounded-[3px] px-1.5 text-[9.5px] font-bold leading-[15px]"
+      style={{ background: b.bg, color: "#fff" }}
     >
-      初
+      {b.label}
     </span>
   );
 }
 
-function ClearTableCard({
-  table,
-  seats,
-}: {
-  table: SeatingTable;
-  seats: Map<number, Attendee>;
-}) {
-  const isHead = table.kind === "head";
-  const count = seats.size;
-  // これまでと同じく最低10行。空いた行は当日の飛び込みを書き込む欄
-  const rows = Math.max(table.capacity, 10);
-  const tone = isHead ? C.kinDeep : C.shu;
-
+/** 見かた。見本は破線の枠だが、破線は印刷禁止なので淡い実線にする */
+function Legend() {
+  const items: [string, string][] = [
+    ["tm", "テーブルマスター"],
+    ["reception", "受付担当"],
+    ["booth", "ブース出展"],
+    ["flyer", "チラシPR"],
+    ["guest", "ゲスト（下に紹介者）"],
+  ];
   return (
     <div
-      className="break-inside-avoid rounded bg-white"
-      style={{ width: CLEAR_CARD_W, border: `1px solid ${isHead ? C.kinLine : C.shuLine}` }}
+      className="rounded-md p-3 text-[10.5px]"
+      style={{ border: `1px solid ${C.cardLine}`, background: C.legendBg, breakInside: "avoid" }}
     >
-      {/* 卓の帯。主賓卓は金、それ以外は朱（王冠のSVGは使わず文字で示す）。
-          角は帯そのものを丸める（親で overflow:hidden して切り抜かない） */}
-      <div
-        className="flex h-[22px] items-center justify-between rounded-t-[3px] px-2.5"
-        style={{ background: tone, color: "#fff" }}
-      >
-        <span className="flex items-baseline gap-1.5">
-          {isHead ? (
-            <span className="text-sm font-bold">主賓席</span>
-          ) : (
-            <>
-              <span className="text-[10px] font-semibold">テーブル</span>
-              <span className="font-brand text-base font-bold leading-none">{table.name}</span>
-            </>
-          )}
-        </span>
-        <span className="text-[10px] font-semibold tabular-nums">
-          着席 {count} / {table.capacity}
+      <p className="mb-2 text-xs font-bold">見かた</p>
+      <div className="flex flex-col gap-1.5">
+        {items.map(([k, label]) => (
+          <span key={k} className="flex items-center gap-2">
+            <span className="w-11 shrink-0">
+              <Badge kind={k} />
+            </span>
+            <span style={{ color: C.sub }}>{label}</span>
+          </span>
+        ))}
+        <span className="flex items-center gap-2">
+          <span
+            className="w-11 shrink-0 rounded-[3px] text-center text-[9.5px] font-bold leading-[15px]"
+            style={{ border: `1px solid ${C.other}`, color: C.other }}
+          >
+            宮崎
+          </span>
+          <span style={{ color: C.sub }}>他会場からの参加（名前の下に表示）</span>
         </span>
       </div>
-
-      <table className="w-full table-fixed border-collapse text-[11px] leading-tight">
-        <colgroup>
-          <col style={{ width: COL.no }} />
-          <col style={{ width: COL.venue }} />
-          <col style={{ width: COL.name }} />
-          <col style={{ width: COL.duty }} />
-        </colgroup>
-        <thead>
-          <tr style={{ background: C.th }}>
-            {["No.", "会場", "氏名", "役割"].map((h) => (
-              <th
-                key={h}
-                className="py-0 text-[10px] font-bold leading-[15px]"
-                style={{ borderBottom: `1px solid ${C.kuroko}` }}
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: rows }).map((_, i) => {
-            const att = seats.get(i);
-            const isGuest = att?.category === "guest";
-            const cell = { height: ROW_H, borderBottom: `1px solid ${C.line}` };
-            return (
-              <tr key={i} className="align-middle" style={isGuest ? { background: C.guest } : undefined}>
-                <td
-                  className="text-center text-[10px] font-semibold"
-                  style={{ ...cell, color: att ? C.sub : "#c9c3b8" }}
-                >
-                  {i + 1}
-                </td>
-                <td
-                  className="overflow-hidden whitespace-nowrap px-1 text-center text-[10px]"
-                  style={{ ...cell, color: C.sub }}
-                >
-                  {att ? venueCell(att) : ""}
-                </td>
-                <td className="overflow-hidden whitespace-nowrap px-1 text-center" style={cell}>
-                  {att && (
-                    <span className="inline-flex items-center gap-1 font-bold">
-                      {att.name}
-                      {att.isFirstTime && <FirstBadge />}
-                    </span>
-                  )}
-                </td>
-                <td
-                  className="overflow-hidden whitespace-nowrap px-1 text-center text-[10px]"
-                  style={{ ...cell, color: C.sub }}
-                >
-                  {att ? remarksCell(att) : ""}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
     </div>
   );
 }
