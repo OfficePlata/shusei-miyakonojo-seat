@@ -126,6 +126,28 @@ function touch(e: SeatingEvent): SeatingEvent {
   return { ...e, updatedAt: Date.now() };
 }
 
+/**
+ * 都城の例会では来賓席を使わない（2026-10-11 確認）。
+ * 既定が来賓席つき・12卓だった頃の下書きが端末に残っているので、どの例会からも来賓席を外す。
+ * - 来賓席に座っていた人は未着席に戻す（割当を消す）
+ * - 来賓席が残っていて誰も座らせていない下書きは、今の既定（15卓×8名）で作り直す
+ * 端末に保存された状態の読み戻し時と、Lark から例会一覧を読んだ時の両方で通す。
+ */
+function withoutHeadTables(e: SeatingEvent): SeatingEvent {
+  const head = new Set(e.tables.filter((t) => t.kind === "head").map((t) => t.id));
+  if (head.size === 0) return e;
+  if (e.assignments.length === 0 && !e.assignments2?.length) {
+    return { ...e, tables: generateTables(DEFAULT_LAYOUT) };
+  }
+  const keep = (a: { tableId: string }) => !head.has(a.tableId);
+  return {
+    ...e,
+    tables: e.tables.filter((t) => !head.has(t.id)),
+    assignments: e.assignments.filter(keep),
+    assignments2: e.assignments2?.filter(keep),
+  };
+}
+
 export const useStore = create<StoreState>()(
   persist(
     (set, get) => {
@@ -182,7 +204,7 @@ export const useStore = create<StoreState>()(
               const prev = byId.get(m.recordId);
               if (prev) {
                 return {
-                  ...prev,
+                  ...withoutHeadTables(prev),
                   title: m.name,
                   date: toDateString(m.startAt),
                   venue: m.venue,
@@ -624,6 +646,15 @@ export const useStore = create<StoreState>()(
       // v6: 例会の id を Lark 例会マスタの record_id に変えた。
       // 旧バージョンのサンプルデータ（evt-2026-07 など）は読み込まない。
       name: "shusei-miyakonojo-seating:v6",
+      // 端末に残った下書きから来賓席を外してから使う（withoutHeadTables）
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<StoreState>;
+        return {
+          ...current,
+          ...p,
+          events: (p.events ?? current.events).map(withoutHeadTables),
+        };
+      },
       partialize: (s) => ({
         events: s.events,
         currentEventId: s.currentEventId,
