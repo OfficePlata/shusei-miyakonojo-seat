@@ -98,22 +98,31 @@ async function larkFetch<T>(
   path: string,
   init: { method?: string; body?: unknown; query?: Record<string, string | number> } = {},
 ): Promise<T> {
-  const token = await getToken(env)
   const url = new URL(`https://${env.LARK_DOMAIN}${path}`)
   for (const [k, v] of Object.entries(init.query ?? {})) url.searchParams.set(k, String(v))
 
-  const res = await fetch(url, {
-    method: init.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json; charset=utf-8',
-    },
-    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-  })
+  // KV に残ったトークンが TTL より先に失効することがある（2026-10-11 実測：99991663 で全 API が 502）。
+  // 失効コードなら KV を捨てて一度だけ取り直す。ポータルの src/lark/client.ts と同じ扱い
+  for (let attempt = 0; ; attempt++) {
+    const token = await getToken(env)
+    const res = await fetch(url, {
+      method: init.method ?? 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    })
 
-  const data = (await res.json()) as { code: number; msg: string; data?: T }
-  if (data.code !== 0) throw new LarkError(`Lark API エラー（code=${data.code} ${data.msg}）`)
-  return data.data as T
+    const data = (await res.json()) as { code: number; msg: string; data?: T }
+    const expired = res.status === 401 || data.code === 99991663 || data.code === 99991661
+    if (expired && attempt === 0) {
+      await env.KV.delete(TOKEN_KEY)
+      continue
+    }
+    if (data.code !== 0) throw new LarkError(`Lark API エラー（code=${data.code} ${data.msg}）`)
+    return data.data as T
+  }
 }
 
 export type LarkRecord = { record_id: string; fields: Record<string, unknown> }

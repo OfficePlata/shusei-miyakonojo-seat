@@ -63,7 +63,8 @@ export interface TableLayoutOptions {
 }
 
 export const DEFAULT_LAYOUT: TableLayoutOptions = {
-  tableCount: 12,
+  // 令和8年10月例会から 15卓×8名（2026-10-11 確認）
+  tableCount: 15,
   seatsPerTable: 8,
   // 都城の例会では来賓席を使わない（2026-10-11 確認）。必要な回だけ「卓の設定」で足す
   includeHeadTable: false,

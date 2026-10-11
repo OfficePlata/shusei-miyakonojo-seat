@@ -237,9 +237,13 @@ export const useStore = create<StoreState>()(
                 count = data.attendees.length;
                 // Lark に配置が無い例会は手元の下書きを使う。ただし来賓席は使わない運用なので、
                 // 既定が来賓席つきだった頃の下書きに残っている来賓席は外す（2026-10-11）
+                // まだ誰も座らせていない下書きは、古い既定（12卓・来賓席つき）のまま残っていることがあるので
+                // 今の既定で作り直す。割り当て済みの下書きは人の作業なので卓を残す
                 const tables = data.layout?.tables?.length
                   ? data.layout.tables
-                  : e.tables.filter((t) => t.kind !== "head");
+                  : e.assignments.length === 0
+                    ? generateTables(DEFAULT_LAYOUT)
+                    : e.tables.filter((t) => t.kind !== "head");
                 // 割当は Lark 側にあるものだけを残す。
                 // 参加者が取り消して居なくなった人の割当が残ると、
                 // 存在しない人が卓に座り続ける
