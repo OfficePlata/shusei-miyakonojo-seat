@@ -1,5 +1,20 @@
-import type { Attendee, AttendeeCategory } from "./types";
+import type { Attendee, AttendeeCategory, Duty } from "./types";
 import { uid } from "./events";
+
+// 参加者の「所属会場」候補（守成クラブの他会場から来る来場者向け）。
+// 入力フォームのサジェストにも使う。都城会場は自会場のため通常は空欄。
+export const VENUES = [
+  "都城",
+  "鹿児島",
+  "宮崎",
+  "大分中央",
+  "延岡",
+  "ヒルノ沖縄",
+  "都城北",
+];
+
+// ゲスト（他会場からの来場）に順番に割り当てるデモ用の会場
+const OTHER_VENUES = VENUES.filter((v) => v !== "都城");
 
 export const INDUSTRIES = [
   "建設業",
@@ -123,17 +138,35 @@ const SEEDS: Seed[] = [
 ];
 
 export function createSampleAttendees(): Attendee[] {
-  return SEEDS.map((s) => ({
-    id: uid("att"),
-    name: s.name,
-    kana: s.kana,
-    company: s.company,
-    industry: s.industry,
-    category: s.category,
-    role: s.role,
-    referrer: s.referrer,
-    isFirstTime: s.isFirstTime,
-    keepWith: [],
-    keepApart: [],
-  }));
+  let guestIdx = 0;
+  return SEEDS.map((s, i) => {
+    // デモ用に当日の役割を数名へ付与（TM / 司会 / 受付 / ブース）
+    const duties: Duty[] = [];
+    if (i === 2) duties.push("tm");
+    if (i === 3) duties.push("mc");
+    if (i === 5 || i === 24) duties.push("reception");
+    if (i === 7 || i === 26) duties.push("booth");
+    if (i === 9) duties.push("flyer");
+
+    const isGuest = s.category === "guest";
+    const venue = isGuest
+      ? OTHER_VENUES[guestIdx++ % OTHER_VENUES.length]
+      : undefined;
+
+    return {
+      id: uid("att"),
+      name: s.name,
+      kana: s.kana,
+      company: s.company,
+      industry: s.industry,
+      category: s.category,
+      venue,
+      duties: duties.length ? duties : undefined,
+      role: s.role,
+      referrer: s.referrer,
+      isFirstTime: s.isFirstTime,
+      keepWith: [],
+      keepApart: [],
+    };
+  });
 }

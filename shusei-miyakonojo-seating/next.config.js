@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Cloudflare Workers（Static Assets）向け静的エクスポート（out/ に書き出し）
+  output: "export",
   allowedDevOrigins: ["*.preview.same-app.com"],
   images: {
     unoptimized: true,

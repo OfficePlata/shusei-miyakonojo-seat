@@ -22,9 +22,14 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStore, useCurrentEvent } from "@/lib/store";
-import type { Attendee, AttendeeCategory } from "@/lib/types";
-import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/lib/types";
-import { INDUSTRIES } from "@/lib/sample-data";
+import type { Attendee, AttendeeCategory, Duty } from "@/lib/types";
+import {
+  CATEGORY_LABELS,
+  CATEGORY_ORDER,
+  DUTY_LABELS,
+  DUTY_ORDER,
+} from "@/lib/types";
+import { INDUSTRIES, VENUES } from "@/lib/sample-data";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -40,6 +45,8 @@ const empty: Omit<Attendee, "id"> = {
   company: "",
   industry: "",
   category: "member",
+  venue: "",
+  duties: [],
   referrer: "",
   role: "",
   group: "",
@@ -166,6 +173,21 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
+              <Label htmlFor="venue">所属会場</Label>
+              <Input
+                id="venue"
+                list="venue-list"
+                value={form.venue}
+                onChange={(e) => set("venue", e.target.value)}
+                placeholder="他会場から来場の場合（例：鹿児島）"
+              />
+              <datalist id="venue-list">
+                {VENUES.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1.5">
               <Label htmlFor="role">役職・肩書き</Label>
               <Input
                 id="role"
@@ -174,15 +196,51 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
                 placeholder="代表世話人 など"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="group">班・グループ</Label>
-              <Input
-                id="group"
-                value={form.group}
-                onChange={(e) => set("group", e.target.value)}
-                placeholder="任意"
-              />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>当日の役割</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {DUTY_ORDER.map((d) => {
+                const active = form.duties?.includes(d) ?? false;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => {
+                      const cur = form.duties ?? [];
+                      set(
+                        "duties",
+                        active
+                          ? cur.filter((x) => x !== d)
+                          : ([...cur, d] as Duty[]),
+                      );
+                    }}
+                    className={
+                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+                      (active
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent")
+                    }
+                  >
+                    {DUTY_LABELS[d]}
+                  </button>
+                );
+              })}
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              TM・受付・ブースは自動配置で各卓に散らします。
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="group">班・グループ</Label>
+            <Input
+              id="group"
+              value={form.group}
+              onChange={(e) => set("group", e.target.value)}
+              placeholder="任意"
+            />
           </div>
 
           {form.category === "guest" && (

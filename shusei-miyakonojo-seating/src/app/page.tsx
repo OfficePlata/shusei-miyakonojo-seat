@@ -31,6 +31,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { BarChart3, Users } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -57,10 +58,31 @@ export default function Home() {
   const moveTable = useStore((s) => s.moveTable);
   const selectedTableId = useStore((s) => s.selectedTableId);
 
+  const loadMeetingsFromLark = useStore((s) => s.loadMeetingsFromLark);
+
   useEffect(() => {
+    // まず手元の状態で画面を出し、そのあと Lark の例会一覧で揃える。
+    // 通信に失敗しても（社外・オフライン）ツールは手元のデータで動く。
     seedIfEmpty();
     setMounted(true);
-  }, [seedIfEmpty]);
+    loadMeetingsFromLark()
+      .then(() => {
+        // 参加者がまだ手元に無い例会だけ、続けて Lark から読む。
+        // 開いてすぐ名簿と卓割が出るようにするため。
+        // 途中まで並べた下書きがある例会は触らない（勝手に消さない）
+        const s = useStore.getState();
+        const current = s.events.find((e) => e.id === s.currentEventId);
+        if (!current || current.attendees.length > 0) return;
+        return s.loadAttendeesFromLark(current.id).then((n) => {
+          if (n > 0) toast.success(`参加者 ${n}名を読み込みました`);
+        });
+      })
+      .catch((e: unknown) => {
+        toast.error(
+          `Lark から読み込めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+  }, [seedIfEmpty, loadMeetingsFromLark]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),

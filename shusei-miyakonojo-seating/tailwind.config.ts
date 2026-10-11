@@ -6,6 +6,9 @@ export default {
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    // 区分ごとの色（CATEGORY_STYLES）はここに文字列で書いてある。
+    // 含め忘れるとクラスが生成されず、色がひとつも効かない
+    "./src/lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {

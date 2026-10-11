@@ -2,8 +2,9 @@
 
 import { cn } from "@/lib/utils";
 import type { Attendee } from "@/lib/types";
-import { CATEGORY_STYLES } from "@/lib/ui-helpers";
-import { GripVertical, Lock, Sparkles, Star } from "lucide-react";
+import { dutyLabels } from "@/lib/types";
+import { CATEGORY_STYLES, visualCategory } from "@/lib/ui-helpers";
+import { GripVertical, Lock, MapPin, Sparkles, Star } from "lucide-react";
 
 interface Props {
   attendee: Attendee;
@@ -26,7 +27,7 @@ export function AttendeeCard({
   className,
   onClick,
 }: Props) {
-  const style = CATEGORY_STYLES[attendee.category];
+  const style = CATEGORY_STYLES[visualCategory(attendee)];
 
   return (
     <div
@@ -81,6 +82,20 @@ export function AttendeeCard({
                 {attendee.role}
               </span>
             )}
+            {attendee.venue && attendee.venue !== "都城" && (
+              <span className="inline-flex items-center gap-0.5 rounded border bg-secondary px-1.5 py-px text-[10px] text-secondary-foreground">
+                <MapPin className="size-2.5" />
+                {attendee.venue}
+              </span>
+            )}
+            {dutyLabels(attendee.duties).map((d) => (
+              <span
+                key={d}
+                className="rounded border border-primary/30 bg-primary/10 px-1.5 py-px text-[10px] font-semibold text-primary"
+              >
+                {d}
+              </span>
+            ))}
           </div>
         )}
       </div>

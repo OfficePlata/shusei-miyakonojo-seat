@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
 import "./globals.css";
 import ClientBody from "./ClientBody";
-import Script from "next/script";
 import { Toaster } from "@/components/ui/sonner";
 
 const notoSansJP = Noto_Sans_JP({
@@ -33,16 +32,11 @@ export default function RootLayout({
       lang="ja"
       className={`${notoSansJP.variable} ${notoSerifJP.variable}`}
     >
-      <head>
-        <Script
-          crossOrigin="anonymous"
-          src="//unpkg.com/react-grab/dist/index.global.js"
-        />
-        <Script
-          crossOrigin="anonymous"
-          src="//unpkg.com/same-runtime/dist/index.global.js"
-        />
-      </head>
+      {/*
+        以前は画面制作ツール由来の react-grab / same-runtime を unpkg から毎回最新版で読み込んでいた。
+        本番には不要で、ページを重くし、react-grab の全面レイヤーが印刷に透明画像として焼き込まれて
+        複合機事故の原因（PDF_PRINT_SAFE_RULES.md §2）になっていたので外した（2026-10-11）。
+      */}
       <body suppressHydrationWarning className="antialiased">
         <ClientBody>{children}</ClientBody>
         <Toaster position="top-center" richColors />

@@ -11,14 +11,26 @@ import type {
 } from "./types";
 import { DEFAULT_RULES } from "./types";
 import {
+  CELL_H,
+  CELL_W,
+  compareTableName,
   DEFAULT_LAYOUT,
   EVENT_SEEDS,
   generateTables,
+  MARGIN_X,
+  MARGIN_Y,
   TableLayoutOptions,
   uid,
 } from "./events";
 import { createSampleAttendees } from "./sample-data";
 import { autoAssign } from "./auto-assign";
+import {
+  fetchMeetings,
+  fetchSeating,
+  saveSeating,
+  toDateString,
+  type SaveResult,
+} from "./lark";
 
 function newEventFromSeed(
   seed: (typeof EVENT_SEEDS)[number],
@@ -46,8 +58,18 @@ interface StoreState {
   selectedAttendeeId: string | null;
   selectedTableId: string | null;
 
+  /** Lark と通信中かどうか。ボタンの二重押しを止めるのに使う */
+  sync: "idle" | "loading" | "saving";
+  /** 最後に Lark から読み込んだ／保存した時刻 */
+  syncedAt: number | null;
+
   // init
   seedIfEmpty: () => void;
+
+  // Lark 連携
+  loadMeetingsFromLark: () => Promise<void>;
+  loadAttendeesFromLark: (meetingId?: string) => Promise<number>;
+  saveSeatingToLark: () => Promise<SaveResult>;
 
   // event
   setCurrentEvent: (id: string) => void;
@@ -84,6 +106,20 @@ interface StoreState {
   // rules + auto
   setRules: (patch: Partial<AutoAssignRules>) => void;
   runAutoAssign: (opts?: { keepLocked?: boolean }) => void;
+  /**
+   * いま画面に出している回転（1 か 2）。
+   * 実体は event.assignments が「表示中」、event.assignments2 が「もう一方」で、
+   * 切り替えるときに中身を入れ替える。こうすると配置・印刷・評価の側は
+   * 回転を意識せず event.assignments だけ見ればよい。
+   */
+  activeRotation: 1 | 2;
+  setRotation: (r: 1 | 2) => void;
+  /** 2回転目を作る。TM とゲストは卓を動かさず、残りを組み替える */
+  runSecondRotation: () => void;
+  /** 2回転目を捨てる */
+  clearSecondRotation: () => void;
+  /** 卓を横 cols 列のグリッドに並べ直す */
+  arrangeTables: (cols: number) => void;
 }
 
 function touch(e: SeatingEvent): SeatingEvent {
@@ -105,8 +141,11 @@ export const useStore = create<StoreState>()(
         events: [],
         currentEventId: "",
         rules: DEFAULT_RULES,
+        activeRotation: 1 as 1 | 2,
         selectedAttendeeId: null,
         selectedTableId: null,
+        sync: "idle",
+        syncedAt: null,
 
         seedIfEmpty: () => {
           const { events } = get();
@@ -123,6 +162,142 @@ export const useStore = create<StoreState>()(
           );
           first.assignments = assignments;
           set({ events: seeded, currentEventId: seeded[0].id });
+        },
+
+        /**
+         * Lark の例会マスタで例会一覧を置き換える。
+         *
+         * ローカルで組んだ卓のレイアウトと割当は id が一致すれば残す
+         * （タイトル・日付・会場だけ Lark に合わせる）。
+         * **Lark に無い例会は捨てる。** 例会マスタが唯一の正で、
+         * 手元にだけある例会を残すと、どれが本物か分からなくなる。
+         */
+        loadMeetingsFromLark: async () => {
+          const { meetings, upcoming } = await fetchMeetings();
+          const now = Date.now();
+
+          set((state) => {
+            const byId = new Map(state.events.map((e) => [e.id, e]));
+            const merged: SeatingEvent[] = meetings.map((m) => {
+              const prev = byId.get(m.recordId);
+              if (prev) {
+                return {
+                  ...prev,
+                  title: m.name,
+                  date: toDateString(m.startAt),
+                  venue: m.venue,
+                };
+              }
+              return {
+                id: m.recordId,
+                title: m.name,
+                date: toDateString(m.startAt),
+                venue: m.venue,
+                attendees: [],
+                tables: generateTables(DEFAULT_LAYOUT),
+                assignments: [],
+                lockedAttendeeIds: [],
+                createdAt: now,
+                updatedAt: now,
+              };
+            });
+
+            // 例会が1つも返ってこなかったときは触らない（通信の一時不調で全部消さない）
+            if (merged.length === 0) return {};
+
+            const current =
+              merged.find((e) => e.id === state.currentEventId)?.id ??
+              upcoming?.recordId ??
+              merged[0]?.id ??
+              "";
+            return { events: merged, currentEventId: current };
+          });
+        },
+
+        /**
+         * 選んでいる例会の参加者を Lark から読み込む。
+         *
+         * 参加者は **出席の回答がある人だけ**（自会場・他会場・ゲスト）。
+         * Lark 側に保存済みの卓割があればそれも復元する。
+         * 卓のレイアウトは、Lark に保存が無ければ手元のものを使う。
+         */
+        loadAttendeesFromLark: async (meetingId) => {
+          const id = meetingId ?? get().currentEventId;
+          if (!id) throw new Error("例会が選ばれていません");
+
+          set({ sync: "loading", activeRotation: 1 });
+          try {
+            const data = await fetchSeating(id);
+            let count = 0;
+            set((state) => ({
+              currentEventId: id,
+              syncedAt: Date.now(),
+              events: state.events.map((e) => {
+                if (e.id !== id) return e;
+                count = data.attendees.length;
+                // Lark に配置が無い例会は手元の下書きを使う。ただし来賓席は使わない運用なので、
+                // 既定が来賓席つきだった頃の下書きに残っている来賓席は外す（2026-10-11）
+                // まだ誰も座らせていない下書きは、古い既定（12卓・来賓席つき）のまま残っていることがあるので
+                // 今の既定で作り直す。割り当て済みの下書きは人の作業なので卓を残す
+                const tables = data.layout?.tables?.length
+                  ? data.layout.tables
+                  : e.assignments.length === 0
+                    ? generateTables(DEFAULT_LAYOUT)
+                    : e.tables.filter((t) => t.kind !== "head");
+                // 割当は Lark 側にあるものだけを残す。
+                // 参加者が取り消して居なくなった人の割当が残ると、
+                // 存在しない人が卓に座り続ける
+                const ids = new Set(data.attendees.map((a) => a.id));
+                const tableIds = new Set(tables.map((t) => t.id));
+                const keep = (a: { attendeeId: string; tableId: string }) =>
+                  ids.has(a.attendeeId) && tableIds.has(a.tableId);
+                const assignments = (data.layout?.assignments ?? []).filter(keep);
+                const second = (data.layout?.assignments2 ?? []).filter(keep);
+                return touch({
+                  ...e,
+                  title: data.meeting.name,
+                  date: toDateString(data.meeting.startAt),
+                  venue: data.meeting.venue,
+                  attendees: data.attendees,
+                  tables,
+                  assignments,
+                  assignments2: second.length ? second : undefined,
+                  lockedAttendeeIds: (data.layout?.lockedAttendeeIds ?? []).filter(
+                    (x) => ids.has(x),
+                  ),
+                });
+              }),
+            }));
+            return count;
+          } finally {
+            set({ sync: "idle" });
+          }
+        },
+
+        /** いまの卓割を Lark へ保存する。受付名簿がこの結果を読む */
+        saveSeatingToLark: async () => {
+          const state = get();
+          const e = state.events.find((x) => x.id === state.currentEventId);
+          if (!e) throw new Error("例会が選ばれていません");
+
+          set({ sync: "saving" });
+          try {
+            // 受付名簿に出す卓番号は必ず1回転目。2回転目を見ている最中でも入れ替えない
+            const first =
+              state.activeRotation === 2 ? (e.assignments2 ?? e.assignments) : e.assignments;
+            const second =
+              state.activeRotation === 2 ? e.assignments : e.assignments2;
+            const result = await saveSeating(e.id, {
+              tables: e.tables,
+              assignments: first,
+              assignments2: second,
+              lockedAttendeeIds: e.lockedAttendeeIds,
+            });
+            set({ syncedAt: Date.now() });
+            return result;
+          } finally {
+            set({ sync: "idle" });
+          }
         },
 
         setCurrentEvent: (id) =>
@@ -341,7 +516,8 @@ export const useStore = create<StoreState>()(
         setRules: (patch) =>
           set((s) => ({ rules: { ...s.rules, ...patch } })),
 
-        runAutoAssign: (opts) =>
+        runAutoAssign: (opts) => {
+          set({ activeRotation: 1 });
           mutateCurrent((e) => {
             const { rules } = get();
             const keepLocked = opts?.keepLocked ?? true;
@@ -353,16 +529,106 @@ export const useStore = create<StoreState>()(
             const { assignments } = autoAssign(e.attendees, e.tables, rules, {
               lockedAssignments: locked,
             });
-            return { ...e, assignments };
+            // 組み直したら、もう一方の回転は前提が変わるので捨てる
+            return { ...e, assignments, assignments2: undefined };
+          });
+        },
+
+        setRotation: (r) => {
+          if (get().activeRotation === r) return;
+          const e = get().events.find((x) => x.id === get().currentEventId);
+          // 2回転目がまだ無いのに切り替えると空の卓が並ぶだけなので何もしない
+          if (!e?.assignments2?.length) return;
+          mutateCurrent((ev) => ({
+            ...ev,
+            assignments: ev.assignments2 ?? [],
+            assignments2: ev.assignments,
+          }));
+          set({ activeRotation: r });
+        },
+
+        runSecondRotation: () => {
+          // 2回転目を見ている状態から作り直すときは、まず1回転目に戻す
+          if (get().activeRotation === 2) {
+            mutateCurrent((ev) => ({
+              ...ev,
+              assignments: ev.assignments2 ?? [],
+              assignments2: ev.assignments,
+            }));
+            set({ activeRotation: 1 });
+          }
+          mutateCurrent((e) => {
+            const { rules } = get();
+            // 卓を動かさないのは TM とゲスト。受付で伝えた卓にゲストは留まる。
+            // 紹介者は固定しないので、2回転目はゲストの隣が入れ替わる
+            const byId = new Map(e.attendees.map((a) => [a.id, a]));
+            const pinnedTables: Record<string, string> = {};
+            for (const a of e.assignments) {
+              const att = byId.get(a.attendeeId);
+              if (att?.duties?.includes("tm") || att?.category === "guest") {
+                pinnedTables[a.attendeeId] = a.tableId;
+              }
+            }
+            const { assignments } = autoAssign(
+              e.attendees,
+              e.tables,
+              // ゲストと紹介者の同卓は1回転目だけ。2回転目は紹介者も他の人と同じに扱う
+              { ...rules, keepGuestNearReferrer: false },
+              { pinnedTables, previousAssignments: e.assignments },
+            );
+            // 作った2回転目をそのまま表示に回し、1回転目を控えへ
+            return { ...e, assignments: assignments, assignments2: e.assignments };
+          });
+          set({ activeRotation: 2 });
+        },
+
+        clearSecondRotation: () => {
+          // 1回転目を表示に戻してから捨てる
+          if (get().activeRotation === 2) {
+            mutateCurrent((ev) => ({
+              ...ev,
+              assignments: ev.assignments2 ?? [],
+              assignments2: undefined,
+            }));
+            set({ activeRotation: 1 });
+            return;
+          }
+          mutateCurrent((e) => ({ ...e, assignments2: undefined }));
+        },
+
+        arrangeTables: (cols) =>
+          mutateCurrent((e) => {
+            const c = Math.max(1, Math.floor(cols));
+            const head = e.tables.filter((t) => t.kind === "head");
+            const normal = e.tables
+              .filter((t) => t.kind !== "head")
+              .sort((a, b) => compareTableName(a.name, b.name));
+            const startY = head.length ? MARGIN_Y + CELL_H : MARGIN_Y;
+            const placed = [
+              ...head.map((t) => ({
+                ...t,
+                x: MARGIN_X + ((c - 1) * CELL_W) / 2,
+                y: MARGIN_Y,
+              })),
+              ...normal.map((t, i) => ({
+                ...t,
+                x: MARGIN_X + (i % c) * CELL_W,
+                y: startY + Math.floor(i / c) * CELL_H,
+              })),
+            ];
+            return { ...e, tables: placed };
           }),
       };
     },
     {
-      name: "shusei-miyakonojo-seating:v3",
+      // v6: 例会の id を Lark 例会マスタの record_id に変えた。
+      // 旧バージョンのサンプルデータ（evt-2026-07 など）は読み込まない。
+      name: "shusei-miyakonojo-seating:v6",
       partialize: (s) => ({
         events: s.events,
         currentEventId: s.currentEventId,
         rules: s.rules,
+        activeRotation: s.activeRotation,
       }),
     },
   ),

@@ -132,29 +132,56 @@
   animation: seat-pop 0.18s ease-out;
 }
 
-/* Print styles: only show the seating chart print area */
+/* Print styles: only show the seating chart print sheet */
 @media print {
-  @page {
-    size: A3 landscape;
-    margin: 12mm;
-  }
+  /* @page の size / margin は PrintView が用紙選択に応じて動的に指定する */
+  html,
   body {
     background: #fff !important;
   }
+  /* 背景の網掛け・罫線・帯をモノクロ印刷でも確実に出す */
+  .print-sheet,
+  .print-sheet * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
   .no-print {
+    display: none !important;
+  }
+  /* layout.tsx が読み込む react-grab の全面レイヤー。印刷すると透明つきの全面画像として
+     PDF に焼き込まれ、複合機事故の原因（SMask）になる（PDF_PRINT_SAFE_RULES.md §2。2026-10-11 実測） */
+  .ph-no-capture {
     display: none !important;
   }
   /* 印刷プレビュー表示中は本体を隠す */
   body.print-mode .app-workspace {
     display: none !important;
   }
-  .print-area {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    padding: 0 !important;
-    margin: 0 !important;
+  /* オーバーレイ・外枠を素の配置に戻し、余計な余白/背景/スクロールを消す */
+  .print-overlay {
+    position: static !important;
+    overflow: visible !important;
     background: #fff !important;
+  }
+  .print-preview-wrap {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: auto !important;
+  }
+  /* 用紙1ページ分の枠。内容は print-scale の transform で収まっている */
+  .print-sheet {
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+  .print-area {
+    padding: 0 !important;
+  }
+  /* 卓グリッドは常に 4 列。卓の表は手本と同じ固定幅なので列も内容幅に合わせる */
+  .print-grid {
+    grid-template-columns: repeat(4, max-content) !important;
+    gap: 2px !important;
+    justify-content: start !important;
   }
   .print-break {
     break-after: page;

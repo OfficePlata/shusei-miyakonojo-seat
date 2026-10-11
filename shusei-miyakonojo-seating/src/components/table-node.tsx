@@ -116,6 +116,10 @@ export function TableNode({
     if (a.tableId === table.id) seatByIndex.set(a.seatIndex, a.attendeeId);
   }
   const occupied = assignments.filter((a) => a.tableId === table.id).length;
+  // 卓の真ん中に TM の名前を出す。どの卓が誰の卓かを見て分かるようにするため
+  const tm = [...seatByIndex.values()]
+    .map((id) => attendeeMap.get(id))
+    .find((a) => a?.duties?.includes("tm"));
 
   return (
     <div
@@ -160,6 +164,11 @@ export function TableNode({
           <span className="text-[10px] font-medium text-muted-foreground">
             {occupied}/{table.capacity}
           </span>
+          {tm && (
+            <span className="mt-0.5 max-w-[92%] truncate rounded-full bg-amber-100 px-1.5 text-[9px] font-bold leading-relaxed text-amber-800">
+              TM {tm.name}
+            </span>
+          )}
         </button>
       ) : (
         <button

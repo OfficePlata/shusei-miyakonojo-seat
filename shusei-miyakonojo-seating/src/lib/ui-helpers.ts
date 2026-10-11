@@ -1,4 +1,26 @@
-import type { AttendeeCategory } from "./types";
+import type { Attendee, AttendeeCategory } from "./types";
+import { isHomeVenue } from "./types";
+
+/**
+ * 画面上の色分け。区分（会員/ゲスト/来賓/事務局）に「他会場」を足したもの。
+ * 他会場からの参加者は Lark 上ただの会員だが、卓の顔ぶれを見るときは
+ * 自会場と見分けられたほうがいい。
+ */
+export type VisualCategory = AttendeeCategory | "away";
+
+/** 凡例・絞り込みの並び順 */
+export const VISUAL_ORDER: VisualCategory[] = [
+  "vip",
+  "member",
+  "away",
+  "guest",
+  "staff",
+];
+
+export function visualCategory(a: Attendee): VisualCategory {
+  if (a.category === "member" && !isHomeVenue(a)) return "away";
+  return a.category;
+}
 
 export interface CategoryStyle {
   label: string;
@@ -15,7 +37,7 @@ export interface CategoryStyle {
   hex: string;
 }
 
-export const CATEGORY_STYLES: Record<AttendeeCategory, CategoryStyle> = {
+export const CATEGORY_STYLES: Record<VisualCategory, CategoryStyle> = {
   vip: {
     label: "来賓",
     solid: "bg-amber-500 text-white",
@@ -43,14 +65,24 @@ export const CATEGORY_STYLES: Record<AttendeeCategory, CategoryStyle> = {
     ring: "ring-sky-500",
     hex: "#2f7cc4",
   },
-  staff: {
-    label: "事務局",
+  away: {
+    label: "他会場",
     solid: "bg-emerald-600 text-white",
     soft: "bg-emerald-50 text-emerald-700 border-emerald-200",
     dot: "bg-emerald-600",
     border: "border-emerald-500",
     ring: "ring-emerald-500",
-    hex: "#2f9668",
+    hex: "#059669",
+  },
+  // 事務局は緑を他会場へ譲ってグレーへ。実データには今のところ居ない
+  staff: {
+    label: "事務局",
+    solid: "bg-slate-600 text-white",
+    soft: "bg-slate-50 text-slate-700 border-slate-200",
+    dot: "bg-slate-600",
+    border: "border-slate-500",
+    ring: "ring-slate-500",
+    hex: "#475569",
   },
 };
 

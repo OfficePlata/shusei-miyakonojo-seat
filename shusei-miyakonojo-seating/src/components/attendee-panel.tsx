@@ -3,9 +3,14 @@
 import { useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useStore, useCurrentEvent } from "@/lib/store";
-import type { Attendee, AttendeeCategory } from "@/lib/types";
+import type { Attendee } from "@/lib/types";
 import { CATEGORY_ORDER } from "@/lib/types";
-import { CATEGORY_STYLES } from "@/lib/ui-helpers";
+import {
+  CATEGORY_STYLES,
+  VISUAL_ORDER,
+  type VisualCategory,
+  visualCategory,
+} from "@/lib/ui-helpers";
 import { DraggableAttendee } from "./draggable-attendee";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +52,7 @@ export function AttendeePanel({ onAddAttendee, onEditAttendee, onImport }: Props
 
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"unseated" | "all">("unseated");
-  const [catFilter, setCatFilter] = useState<AttendeeCategory | "all">("all");
+  const [catFilter, setCatFilter] = useState<VisualCategory | "all">("all");
 
   const { setNodeRef, isOver } = useDroppable({ id: "unseated" });
 
@@ -74,7 +79,9 @@ export function AttendeePanel({ onAddAttendee, onEditAttendee, onImport }: Props
     const q = query.trim().toLowerCase();
     return attendees
       .filter((a) => (tab === "unseated" ? !assignedIds.has(a.id) : true))
-      .filter((a) => (catFilter === "all" ? true : a.category === catFilter))
+      .filter((a) =>
+        catFilter === "all" ? true : visualCategory(a) === catFilter,
+      )
       .filter((a) => {
         if (!q) return true;
         return (
@@ -97,8 +104,8 @@ export function AttendeePanel({ onAddAttendee, onEditAttendee, onImport }: Props
       all: attendees.length,
       unseated: attendees.filter((a) => !assignedIds.has(a.id)).length,
     };
-    for (const cat of CATEGORY_ORDER)
-      c[cat] = attendees.filter((a) => a.category === cat).length;
+    for (const cat of VISUAL_ORDER)
+      c[cat] = attendees.filter((a) => visualCategory(a) === cat).length;
     return c;
   }, [attendees, assignedIds]);
 
@@ -207,7 +214,7 @@ export function AttendeePanel({ onAddAttendee, onEditAttendee, onImport }: Props
           onClick={() => setCatFilter("all")}
           label="すべて"
         />
-        {CATEGORY_ORDER.map((cat) => (
+        {VISUAL_ORDER.filter((cat) => counts[cat] > 0).map((cat) => (
           <FilterChip
             key={cat}
             active={catFilter === cat}

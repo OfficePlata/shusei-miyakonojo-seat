@@ -1,6 +1,6 @@
 import Papa from "papaparse";
 import type { Attendee, AttendeeCategory } from "./types";
-import { CATEGORY_LABELS } from "./types";
+import { CATEGORY_LABELS, dutyLabels, parseDuties } from "./types";
 import { uid } from "./events";
 
 /* ============================================================
@@ -13,6 +13,8 @@ export type FieldKey =
   | "company"
   | "industry"
   | "category"
+  | "venue"
+  | "duties"
   | "referrer"
   | "role"
   | "group"
@@ -33,6 +35,8 @@ export const APP_FIELDS: FieldDef[] = [
   { key: "company", label: "会社名・屋号" },
   { key: "industry", label: "業種" },
   { key: "category", label: "区分" },
+  { key: "venue", label: "所属会場" },
+  { key: "duties", label: "当日の役割", hint: "TM/受付/ブース/司会 など（カンマ区切り可）" },
   { key: "referrer", label: "紹介者" },
   { key: "role", label: "役職・肩書き" },
   { key: "group", label: "班・グループ" },
@@ -203,8 +207,20 @@ const FIELD_ALIASES: Record<FieldKey, string[]> = {
     "category",
     "type",
   ],
+  venue: ["所属会場", "会場", "所属", "支部", "チャプター", "ホーム会場", "venue"],
+  duties: [
+    "当日の役割",
+    "当日役割",
+    "役割",
+    "係",
+    "担当",
+    "会場ロール",
+    "ロール",
+    "duty",
+    "duties",
+  ],
   referrer: ["紹介者", "紹介", "招待者", "紹介会員", "referrer"],
-  role: ["役職", "肩書き", "肩書", "役割", "役職名", "title", "role"],
+  role: ["役職", "肩書き", "肩書", "役職名", "title", "role"],
   group: ["班", "グループ", "組", "チーム", "班名", "group"],
   isFirstTime: ["初参加", "初回", "初", "新規", "first", "new"],
   attendance: [
@@ -323,6 +339,10 @@ export function rowsToAttendees(
     const categoryRaw = get(row, "category");
     const firstRaw = get(row, "isFirstTime");
 
+    // 当日の役割は専用列 + 備考の両方から推定してまとめる
+    const dutiesRaw = `${get(row, "duties")} ${get(row, "notes")}`;
+    const duties = parseDuties(dutiesRaw);
+
     attendees.push({
       id: uid("att"),
       name,
@@ -330,6 +350,8 @@ export function rowsToAttendees(
       company: get(row, "company"),
       industry: get(row, "industry"),
       category: categoryRaw ? categoryFromValue(categoryRaw) : "member",
+      venue: get(row, "venue"),
+      duties,
       referrer: get(row, "referrer"),
       role: get(row, "role"),
       group: get(row, "group"),
@@ -355,6 +377,8 @@ export function attendeesToCSV(attendees: Attendee[]): string {
     会社名: a.company,
     業種: a.industry,
     区分: CATEGORY_LABELS[a.category],
+    所属会場: a.venue ?? "",
+    当日の役割: dutyLabels(a.duties).join("・"),
     紹介者: a.referrer ?? "",
     役職: a.role ?? "",
     班: a.group ?? "",
@@ -368,6 +392,8 @@ export function attendeesToCSV(attendees: Attendee[]): string {
       "会社名",
       "業種",
       "区分",
+      "所属会場",
+      "当日の役割",
       "紹介者",
       "役職",
       "班",
@@ -377,9 +403,9 @@ export function attendeesToCSV(attendees: Attendee[]): string {
   });
 }
 
-export const CSV_TEMPLATE = `氏名,ふりがな,会社名,業種,区分,紹介者,役職,班,初参加,備考
-田中 太郎,たなか たろう,田中商事,卸売業,会員,,世話人,,,
-山田 花子,やまだ はなこ,山田デザイン,広告・印刷,ゲスト,田中 太郎,,,○,初めての参加です
+export const CSV_TEMPLATE = `氏名,ふりがな,会社名,業種,区分,所属会場,当日の役割,紹介者,役職,班,初参加,備考
+田中 太郎,たなか たろう,田中商事,卸売業,会員,都城,TM,,世話人,,,
+山田 花子,やまだ はなこ,山田デザイン,広告・印刷,ゲスト,鹿児島,,田中 太郎,,,○,初めての参加です
 `;
 
 export function downloadCSV(filename: string, csv: string) {
