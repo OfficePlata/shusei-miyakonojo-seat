@@ -73,6 +73,11 @@ export interface Attendee {
   category: AttendeeCategory; // 区分
   venue?: string; // 所属会場（鹿児島 / 宮崎 / 大分中央 / 延岡 / ヒルノ沖縄 など）
   duties?: Duty[]; // 当日の役割（TM / 受付 / ブース / 司会 など）
+  /**
+   * 当番表で決めた卓名（TM・受付だけ）。自動配置の1回転目はこの卓に固定する。
+   * 2回転目は TM だけが卓に残り、受付は他の人と同じく入れ替わる
+   */
+  dutyTable?: string;
   referrer?: string; // 紹介者（ゲストの場合）
   role?: string; // 役職・肩書き（代表世話人 など）
   group?: string; // 班・グループ

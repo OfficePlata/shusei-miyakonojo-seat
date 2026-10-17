@@ -91,3 +91,42 @@ export async function saveSeating(
   }
   return data;
 }
+
+/** 当番表の TM・受付1枠。卓を割り振る対象 */
+export interface DutySlot {
+  recordId: string;
+  /** 'TM' / '受付' */
+  role: string;
+  name: string;
+  /** 割り振った卓名。未指定は空 */
+  tableNo: string;
+  order: number | null;
+  status: string;
+  note: string;
+}
+
+export async function fetchDuties(meetingId: string): Promise<DutySlot[]> {
+  const data = await get<{ duties: DutySlot[] }>(
+    `/api/duties?meeting=${encodeURIComponent(meetingId)}`,
+  );
+  return data.duties;
+}
+
+/** TM・受付の卓を当番表へ保存する。変わった行だけ書かれる */
+export async function saveDuties(
+  meetingId: string,
+  updates: { recordId: string; tableNo: string }[],
+): Promise<{ updated: number }> {
+  const res = await fetch(`/api/duties?meeting=${encodeURIComponent(meetingId)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ updates }),
+  });
+  const data = (await res.json().catch(() => null)) as
+    | { updated: number; error?: string }
+    | null;
+  if (!res.ok || !data) {
+    throw new Error(data?.error ?? `保存に失敗しました（HTTP ${res.status}）`);
+  }
+  return data;
+}

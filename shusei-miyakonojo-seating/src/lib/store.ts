@@ -107,6 +107,11 @@ interface StoreState {
   setRules: (patch: Partial<AutoAssignRules>) => void;
   runAutoAssign: (opts?: { keepLocked?: boolean }) => void;
   /**
+   * 当番表で決めた TM・受付の卓を参加者に写す（氏名 → 卓名。空なら指定なし）。
+   * 「当番の卓」で保存した直後に、参加者を読み直さずに自動配置へ効かせるため
+   */
+  setDutyTables: (tableByName: Record<string, string>) => void;
+  /**
    * いま画面に出している回転（1 か 2）。
    * 実体は event.assignments が「表示中」、event.assignments2 が「もう一方」で、
    * 切り替えるときに中身を入れ替える。こうすると配置・印刷・評価の側は
@@ -120,6 +125,23 @@ interface StoreState {
   clearSecondRotation: () => void;
   /** 卓を横 cols 列のグリッドに並べ直す */
   arrangeTables: (cols: number) => void;
+}
+
+/** 氏名の突合キー。当番表と出欠記録でスペースの有無が揺れる */
+export const personKey = (s: string): string => s.replace(/[\s　]/g, "");
+
+/**
+ * 当番表で卓を決めた人（TM・受付）→ 卓 id。自動配置の1回転目で卓を固定する。
+ * 卓名が今のレイアウトに無い指定（卓を減らした等）は無視する
+ */
+function dutyPins(e: SeatingEvent): Record<string, string> {
+  const idByName = new Map(e.tables.map((t) => [t.name.trim(), t.id]));
+  const pins: Record<string, string> = {};
+  for (const a of e.attendees) {
+    const id = a.dutyTable ? idByName.get(a.dutyTable.trim()) : undefined;
+    if (id) pins[a.id] = id;
+  }
+  return pins;
 }
 
 function touch(e: SeatingEvent): SeatingEvent {
@@ -535,6 +557,16 @@ export const useStore = create<StoreState>()(
             };
           }),
 
+        setDutyTables: (tableByName) =>
+          mutateCurrent((e) => ({
+            ...e,
+            attendees: e.attendees.map((a) => {
+              const key = personKey(a.name);
+              if (!(key in tableByName)) return a;
+              return { ...a, dutyTable: tableByName[key] || undefined };
+            }),
+          })),
+
         setRules: (patch) =>
           set((s) => ({ rules: { ...s.rules, ...patch } })),
 
@@ -550,6 +582,7 @@ export const useStore = create<StoreState>()(
               : [];
             const { assignments } = autoAssign(e.attendees, e.tables, rules, {
               lockedAssignments: locked,
+              pinnedTables: dutyPins(e),
             });
             // 組み直したら、もう一方の回転は前提が変わるので捨てる
             return { ...e, assignments, assignments2: undefined };
