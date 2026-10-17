@@ -138,7 +138,12 @@ export function autoAssign(
     if (!isHomeVenue(a)) return 5;
     return 6;
   };
+  // 卓を指定された人（当番表で卓を決めた TM・受付、2回転目の TM・ゲスト）は最初に置く。
+  // 後から置くと、先に座った人で卓が埋まったり、別の TM が入ったりする
+  const pinnedFirst = (a: Attendee) => (opts?.pinnedTables?.[a.id] ? 0 : 1);
   const order = [...remaining].sort((a, b) => {
+    const p = pinnedFirst(a) - pinnedFirst(b);
+    if (p !== 0) return p;
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
     return rng() - 0.5;

@@ -6,6 +6,7 @@ import { TableNode, computeTableLayout } from "./table-node";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  LayoutGrid,
   Maximize2,
   Minus,
   Move,
@@ -23,6 +24,10 @@ interface Props {
   onSelectAttendee: (a: Attendee) => void;
   onBackgroundClick?: () => void;
   onScaleChange?: (scale: number) => void;
+  /** 変わると全体表示に合わせ直す（例会の切り替え・卓の並べ直し・卓の増減） */
+  fitKey?: string;
+  /** 「卓を整列」。いまの列数のまま卓番号順に並べ直す */
+  onArrange?: () => void;
 }
 
 const MIN_SCALE = 0.35;
@@ -38,6 +43,8 @@ export function SeatingCanvas({
   onSelectAttendee,
   onBackgroundClick,
   onScaleChange,
+  fitKey,
+  onArrange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.8);
@@ -80,24 +87,45 @@ export function SeatingCanvas({
     const el = containerRef.current;
     if (!el) return;
     const { minX, minY, maxX, maxY } = contentBounds();
+    // 上は「会場前方」の札、下は拡大縮小の道具箱に隠れないよう余白を取る
+    const TOP = 44;
+    const BOTTOM = 68;
     const cw = el.clientWidth - 48;
-    const ch = el.clientHeight - 48;
+    const ch = el.clientHeight - TOP - BOTTOM;
     const w = maxX - minX;
     const h = maxY - minY;
     const s = clampScale(Math.min(cw / w, ch / h, 1.2));
     setScale(s);
     setTx((el.clientWidth - w * s) / 2 - minX * s);
-    setTy(Math.max(24, (el.clientHeight - h * s) / 2 - minY * s));
+    setTy(TOP + Math.max(0, (ch - h * s) / 2) - minY * s);
   }, [contentBounds]);
 
-  // 初回フィット
-  const didFit = useRef(false);
+  // 開いたとき・例会を切り替えたとき・卓を並べ直したときに全体表示へ合わせる。
+  // 卓を1つ手で動かしただけでは合わせ直さない（見ている場所が飛ぶと操作しにくい）
+  const fittedKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!didFit.current && tables.length) {
-      didFit.current = true;
-      requestAnimationFrame(fit);
-    }
-  }, [tables.length, fit]);
+    const key = fitKey ?? String(tables.length > 0);
+    if (!tables.length || fittedKey.current === key) return;
+    fittedKey.current = key;
+    requestAnimationFrame(fit);
+  }, [fitKey, tables.length, fit]);
+
+  // キーボード：F で全体表示、＋／− で拡大縮小。文字の入力中は奪わない
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (e.key === "f" || e.key === "F") fit();
+      else if (e.key === "+" || e.key === "=") zoomAt(0.15);
+      else if (e.key === "-") zoomAt(-0.15);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const zoomAt = (delta: number, cx?: number, cy?: number) => {
     const el = containerRef.current;
@@ -113,12 +141,35 @@ export function SeatingCanvas({
     });
   };
 
+  /**
+   * ホイール・トラックパッド。
+   * - ピンチ（ブラウザは ctrlKey 付きのホイールとして送る）と Ctrl/⌘＋ホイール … 拡大縮小
+   * - マウスのホイール（1目盛り 120 単位）… 拡大縮小（従来どおり）
+   * - トラックパッドの2本指スクロール … 画面の移動。以前はこれも拡大縮小になり、思った所へ動けなかった
+   */
   const onWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > 0) {
-      e.preventDefault();
-      zoomAt(e.deltaY > 0 ? -0.12 : 0.12, e.clientX, e.clientY);
+    const native = e.nativeEvent as WheelEvent & { wheelDeltaY?: number; wheelDeltaX?: number };
+    const isMouseWheel =
+      e.deltaX === 0 &&
+      (e.deltaMode !== 0 || (!!native.wheelDeltaY && native.wheelDeltaY % 120 === 0));
+    if (e.ctrlKey || e.metaKey || isMouseWheel) {
+      // ピンチは細かい値が連続で来るので量に比例させる。ホイールは1目盛りずつ
+      const delta = e.ctrlKey && !isMouseWheel ? -e.deltaY * 0.01 : e.deltaY > 0 ? -0.12 : 0.12;
+      zoomAt(Math.max(-0.3, Math.min(0.3, delta)), e.clientX, e.clientY);
+      return;
     }
+    setTx((t) => t - e.deltaX);
+    setTy((t) => t - e.deltaY);
   };
+
+  // React の onWheel は passive なので preventDefault が効かない。ページ全体の拡大を止めるため直に付ける
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const stop = (ev: WheelEvent) => ev.preventDefault();
+    el.addEventListener("wheel", stop, { passive: false });
+    return () => el.removeEventListener("wheel", stop);
+  }, []);
 
   const onPointerDown = (e: React.PointerEvent) => {
     // 背景（このdiv自身）でのみパンを開始
@@ -195,7 +246,7 @@ export function SeatingCanvas({
           variant="ghost"
           className="size-8"
           onClick={() => zoomAt(-0.15)}
-          title="縮小"
+          title="縮小（−）"
         >
           <Minus className="size-4" />
         </Button>
@@ -207,7 +258,7 @@ export function SeatingCanvas({
           variant="ghost"
           className="size-8"
           onClick={() => zoomAt(0.15)}
-          title="拡大"
+          title="拡大（＋）"
         >
           <Plus className="size-4" />
         </Button>
@@ -217,10 +268,22 @@ export function SeatingCanvas({
           variant="ghost"
           className="size-8"
           onClick={fit}
-          title="全体表示"
+          title="全体表示（F）"
         >
           <Maximize2 className="size-4" />
         </Button>
+        {onArrange && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 gap-1 px-2 text-xs"
+            onClick={onArrange}
+            title="卓を番号順に格子へ並べ直す（列の数はそのまま）"
+          >
+            <LayoutGrid className="size-4" />
+            卓を整列
+          </Button>
+        )}
         <Button
           size="icon"
           variant="ghost"
@@ -239,7 +302,7 @@ export function SeatingCanvas({
       {/* 操作ヒント */}
       <div className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-1.5 rounded-lg border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
         <Move className="size-3.5" />
-        背景ドラッグで移動・ホイールで拡大縮小
+        背景ドラッグ・2本指スクロールで移動／ピンチ・ホイールで拡大縮小／F で全体表示
       </div>
     </div>
   );

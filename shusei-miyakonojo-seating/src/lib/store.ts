@@ -11,14 +11,14 @@ import type {
 } from "./types";
 import { DEFAULT_RULES } from "./types";
 import {
-  CELL_H,
-  CELL_W,
-  compareTableName,
   DEFAULT_LAYOUT,
   EVENT_SEEDS,
+  columnsOf,
+  dropPosition,
+  fixOverlaps,
+  freeSlot,
   generateTables,
-  MARGIN_X,
-  MARGIN_Y,
+  layoutGrid,
   TableLayoutOptions,
   uid,
 } from "./events";
@@ -107,6 +107,11 @@ interface StoreState {
   setRules: (patch: Partial<AutoAssignRules>) => void;
   runAutoAssign: (opts?: { keepLocked?: boolean }) => void;
   /**
+   * 当番表で決めた TM・受付の卓を参加者に写す（氏名 → 卓名。空なら指定なし）。
+   * 「当番の卓」で保存した直後に、参加者を読み直さずに自動配置へ効かせるため
+   */
+  setDutyTables: (tableByName: Record<string, string>) => void;
+  /**
    * いま画面に出している回転（1 か 2）。
    * 実体は event.assignments が「表示中」、event.assignments2 が「もう一方」で、
    * 切り替えるときに中身を入れ替える。こうすると配置・印刷・評価の側は
@@ -119,11 +124,57 @@ interface StoreState {
   /** 2回転目を捨てる */
   clearSecondRotation: () => void;
   /** 卓を横 cols 列のグリッドに並べ直す */
-  arrangeTables: (cols: number) => void;
+  /** 卓を並べ直すと 1 増える。キャンバスはこれを見て全体表示に合わせ直す */
+  layoutNonce: number;
+  /** cols を省くと、いまの列数のまま整列する */
+  arrangeTables: (cols?: number) => void;
+}
+
+/** 氏名の突合キー。当番表と出欠記録でスペースの有無が揺れる */
+export const personKey = (s: string): string => s.replace(/[\s　]/g, "");
+
+/**
+ * 当番表で卓を決めた人（TM・受付）→ 卓 id。自動配置の1回転目で卓を固定する。
+ * 卓名が今のレイアウトに無い指定（卓を減らした等）は無視する
+ */
+function dutyPins(e: SeatingEvent): Record<string, string> {
+  const idByName = new Map(e.tables.map((t) => [t.name.trim(), t.id]));
+  const pins: Record<string, string> = {};
+  for (const a of e.attendees) {
+    const id = a.dutyTable ? idByName.get(a.dutyTable.trim()) : undefined;
+    if (id) pins[a.id] = id;
+  }
+  return pins;
 }
 
 function touch(e: SeatingEvent): SeatingEvent {
   return { ...e, updatedAt: Date.now() };
+}
+
+/**
+ * 都城の例会では来賓席を使わない（2026-10-11 確認）。
+ * 既定が来賓席つき・12卓だった頃の下書きが端末に残っているので、どの例会からも来賓席を外す。
+ * - 来賓席に座っていた人は未着席に戻す（割当を消す）
+ * - 来賓席が残っていて誰も座らせていない下書きは、今の既定（15卓×8名）で作り直す
+ * 端末に保存された状態の読み戻し時と、Lark から例会一覧を読んだ時の両方で通す。
+ */
+function withoutHeadTables(e: SeatingEvent): SeatingEvent {
+  const head = new Set(e.tables.filter((t) => t.kind === "head").map((t) => t.id));
+  if (head.size === 0) {
+    // 卓の間隔が 260px 固定だった頃の配置は、10人掛けにすると重なっている。読み込み時に直す
+    const tables = fixOverlaps(e.tables);
+    return tables === e.tables ? e : { ...e, tables };
+  }
+  if (e.assignments.length === 0 && !e.assignments2?.length) {
+    return { ...e, tables: generateTables(DEFAULT_LAYOUT) };
+  }
+  const keep = (a: { tableId: string }) => !head.has(a.tableId);
+  return {
+    ...e,
+    tables: fixOverlaps(e.tables.filter((t) => !head.has(t.id))),
+    assignments: e.assignments.filter(keep),
+    assignments2: e.assignments2?.filter(keep),
+  };
 }
 
 export const useStore = create<StoreState>()(
@@ -142,6 +193,7 @@ export const useStore = create<StoreState>()(
         currentEventId: "",
         rules: DEFAULT_RULES,
         activeRotation: 1 as 1 | 2,
+        layoutNonce: 0,
         selectedAttendeeId: null,
         selectedTableId: null,
         sync: "idle",
@@ -182,7 +234,7 @@ export const useStore = create<StoreState>()(
               const prev = byId.get(m.recordId);
               if (prev) {
                 return {
-                  ...prev,
+                  ...withoutHeadTables(prev),
                   title: m.name,
                   date: toDateString(m.startAt),
                   venue: m.venue,
@@ -240,7 +292,7 @@ export const useStore = create<StoreState>()(
                 // まだ誰も座らせていない下書きは、古い既定（12卓・来賓席つき）のまま残っていることがあるので
                 // 今の既定で作り直す。割り当て済みの下書きは人の作業なので卓を残す
                 const tables = data.layout?.tables?.length
-                  ? data.layout.tables
+                  ? fixOverlaps(data.layout.tables)
                   : e.assignments.length === 0
                     ? generateTables(DEFAULT_LAYOUT)
                     : e.tables.filter((t) => t.kind !== "head");
@@ -268,6 +320,8 @@ export const useStore = create<StoreState>()(
                 });
               }),
             }));
+            // 読み込んだ配置で全体表示に合わせ直す（重なりを直して位置が変わることがある）
+            set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
             return count;
           } finally {
             set({ sync: "idle" });
@@ -419,14 +473,17 @@ export const useStore = create<StoreState>()(
         addTable: (t) =>
           mutateCurrent((e) => ({
             ...e,
-            tables: [...e.tables, { ...t, id: uid("tbl") }],
+            // 渡された位置ではなく、どの卓とも重ならない最初のマスに置く
+            tables: [...e.tables, { ...t, ...freeSlot(e.tables, t), id: uid("tbl") }],
           })),
 
         updateTable: (id, patch) =>
-          mutateCurrent((e) => ({
-            ...e,
-            tables: e.tables.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-          })),
+          mutateCurrent((e) => {
+            const tables = e.tables.map((t) => (t.id === id ? { ...t, ...patch } : t));
+            // 人数や形を変えると卓が大きくなって隣と重なることがある。そのときだけ並べ直す
+            const resized = patch.capacity !== undefined || patch.shape !== undefined;
+            return { ...e, tables: resized ? fixOverlaps(tables) : tables };
+          }),
 
         removeTable: (id) =>
           mutateCurrent((e) => ({
@@ -435,19 +492,24 @@ export const useStore = create<StoreState>()(
             assignments: e.assignments.filter((a) => a.tableId !== id),
           })),
 
-        regenerateTables: (opts) =>
+        regenerateTables: (opts) => {
           mutateCurrent((e) => ({
             ...e,
             tables: generateTables(opts),
             assignments: [],
             lockedAttendeeIds: [],
-          })),
+          }));
+          set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
+        },
 
         moveTable: (id, x, y) =>
-          mutateCurrent((e) => ({
-            ...e,
-            tables: e.tables.map((t) => (t.id === id ? { ...t, x, y } : t)),
-          })),
+          mutateCurrent((e) => {
+            const moving = e.tables.find((t) => t.id === id);
+            if (!moving) return e;
+            // 他の卓に重ねて落としたら、近くの空いているマスへ寄せる
+            const pos = dropPosition(e.tables, moving, x, y);
+            return { ...e, tables: e.tables.map((t) => (t.id === id ? { ...t, ...pos } : t)) };
+          }),
 
         assignSeat: (attendeeId, tableId, seatIndex) =>
           mutateCurrent((e) => {
@@ -513,6 +575,16 @@ export const useStore = create<StoreState>()(
             };
           }),
 
+        setDutyTables: (tableByName) =>
+          mutateCurrent((e) => ({
+            ...e,
+            attendees: e.attendees.map((a) => {
+              const key = personKey(a.name);
+              if (!(key in tableByName)) return a;
+              return { ...a, dutyTable: tableByName[key] || undefined };
+            }),
+          })),
+
         setRules: (patch) =>
           set((s) => ({ rules: { ...s.rules, ...patch } })),
 
@@ -528,6 +600,7 @@ export const useStore = create<StoreState>()(
               : [];
             const { assignments } = autoAssign(e.attendees, e.tables, rules, {
               lockedAssignments: locked,
+              pinnedTables: dutyPins(e),
             });
             // 組み直したら、もう一方の回転は前提が変わるので捨てる
             return { ...e, assignments, assignments2: undefined };
@@ -596,34 +669,25 @@ export const useStore = create<StoreState>()(
           mutateCurrent((e) => ({ ...e, assignments2: undefined }));
         },
 
-        arrangeTables: (cols) =>
-          mutateCurrent((e) => {
-            const c = Math.max(1, Math.floor(cols));
-            const head = e.tables.filter((t) => t.kind === "head");
-            const normal = e.tables
-              .filter((t) => t.kind !== "head")
-              .sort((a, b) => compareTableName(a.name, b.name));
-            const startY = head.length ? MARGIN_Y + CELL_H : MARGIN_Y;
-            const placed = [
-              ...head.map((t) => ({
-                ...t,
-                x: MARGIN_X + ((c - 1) * CELL_W) / 2,
-                y: MARGIN_Y,
-              })),
-              ...normal.map((t, i) => ({
-                ...t,
-                x: MARGIN_X + (i % c) * CELL_W,
-                y: startY + Math.floor(i / c) * CELL_H,
-              })),
-            ];
-            return { ...e, tables: placed };
-          }),
+        arrangeTables: (cols) => {
+          mutateCurrent((e) => ({ ...e, tables: layoutGrid(e.tables, cols ?? columnsOf(e.tables)) }));
+          set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
+        },
       };
     },
     {
       // v6: 例会の id を Lark 例会マスタの record_id に変えた。
       // 旧バージョンのサンプルデータ（evt-2026-07 など）は読み込まない。
       name: "shusei-miyakonojo-seating:v6",
+      // 端末に残った下書きから来賓席を外してから使う（withoutHeadTables）
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<StoreState>;
+        return {
+          ...current,
+          ...p,
+          events: (p.events ?? current.events).map(withoutHeadTables),
+        };
+      },
       partialize: (s) => ({
         events: s.events,
         currentEventId: s.currentEventId,

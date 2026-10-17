@@ -1,10 +1,12 @@
 /**
  * 座席表メーカーの API。静的アセット（Next の out/）と同じ Worker に同居する。
  *
- * 役割は3つだけ:
+ * 役割:
  *   GET  /api/meetings                  例会の一覧（Lark 例会マスタ）
  *   GET  /api/seating?meeting=rec...    参加者＋保存済みの卓割
  *   PUT  /api/seating?meeting=rec...    卓割を保存
+ *   GET  /api/duties?meeting=rec...     その例会の TM・受付（当番表）
+ *   PUT  /api/duties?meeting=rec...     TM・受付の卓を当番表「テーブル番号」へ保存
  *
  * 参加者の正は Lark BASE「出欠記録」。**出席の回答がある人だけ**を返す。
  * 自会場・他会場・ゲストの3区分すべてが受付を通るので、3つとも返す。
@@ -55,6 +57,8 @@ type Attendee = {
   role: string
   /** 事業案内の原文。卓割では使わないが画面で参考になる */
   notes: string
+  /** 当番表で決めた卓（TM・受付）。自動配置はこの卓に固定する。未指定は空 */
+  dutyTable: string
   /**
    * 受付名簿・冊子用一覧（元データの紙）に出す値。卓割では使わない。
    * 9月例会で、別に作った名簿と座席表の卓番号が食い違って参加者を戸惑わせたため、
@@ -155,6 +159,7 @@ async function loadAttendees(
       duties,
       role: '',
       notes: '',
+      dutyTable: '',
       sheet: {
         memberType: fieldText(r.fields[ATTENDANCE_FIELDS.memberType]),
         badge: fieldText(r.fields[ATTENDANCE_FIELDS.badge]),
@@ -260,7 +265,78 @@ async function applyDuties(env: Bindings, meetingId: string, attendees: Attendee
     const a = byName.get(nameKey(fieldText(r.fields[DUTY_FIELDS.personName])))
     if (!a) continue
     if (!a.duties.includes(duty)) a.duties.push(duty)
+    // 卓の指定は TM と受付だけ。両方を持つ人は TM の卓を優先する（TM は卓の顔なので動かせない）
+    const table = fieldText(r.fields[DUTY_FIELDS.tableNo]).trim()
+    if (table && (duty === 'tm' || (duty === 'reception' && !a.dutyTable))) a.dutyTable = table
   }
+}
+
+// --- 当番の卓（TM・受付） ---
+
+/** 卓を割り振る役割。当番表「役割」の値 */
+const TABLE_DUTY_ROLES = ['TM', '受付'] as const
+
+type DutySlot = {
+  recordId: string
+  role: string
+  name: string
+  tableNo: string
+  order: number | null
+  status: string
+  note: string
+}
+
+async function loadDutySlots(env: Bindings, meetingId: string): Promise<(DutySlot & { title: string })[]> {
+  const records = await searchAll(env, TABLES.duties, Object.values(DUTY_FIELDS))
+  return records
+    .filter((r) => fieldLinkIds(r.fields[DUTY_FIELDS.meeting]).includes(meetingId))
+    .map((r) => ({
+      recordId: r.record_id,
+      title: fieldText(r.fields[DUTY_FIELDS.name]),
+      role: fieldText(r.fields[DUTY_FIELDS.role]),
+      name: fieldText(r.fields[DUTY_FIELDS.personName]),
+      tableNo: fieldText(r.fields[DUTY_FIELDS.tableNo]).trim(),
+      order: fieldNumber(r.fields[DUTY_FIELDS.order]),
+      status: fieldText(r.fields[DUTY_FIELDS.status]),
+      note: fieldText(r.fields[DUTY_FIELDS.note]),
+    }))
+    .filter((d) => (TABLE_DUTY_ROLES as readonly string[]).includes(d.role) && d.status !== '交代')
+    .sort((a, b) => a.role.localeCompare(b.role) || (a.order ?? 999) - (b.order ?? 999))
+}
+
+async function handleGetDuties(env: Bindings, meetingId: string): Promise<Response> {
+  const duties = (await loadDutySlots(env, meetingId)).map(({ title: _, ...d }) => d)
+  return json({ duties })
+}
+
+/**
+ * TM・受付の卓を当番表へ保存する。
+ * TM の当番名は 9月例会までの書き方（「令和8年9月 TM 3卓」）に揃えて卓を付け直す。
+ * 受付の当番名は卓を含めない（従来どおり）。
+ */
+async function handlePutDuties(env: Bindings, meetingId: string, req: Request): Promise<Response> {
+  const body = (await req.json().catch(() => null)) as { updates?: { recordId?: string; tableNo?: string }[] } | null
+  if (!body || !Array.isArray(body.updates)) {
+    return json({ error: 'updates を含む JSON を送ってください' }, 400)
+  }
+
+  // この例会の TM・受付の行だけ書き換える。他の例会・他の役割の行は record_id を渡されても触らない
+  const slots = new Map((await loadDutySlots(env, meetingId)).map((d) => [d.recordId, d]))
+  const updates: { record_id: string; fields: Record<string, unknown> }[] = []
+  for (const u of body.updates) {
+    const slot = u.recordId ? slots.get(u.recordId) : undefined
+    if (!slot) continue
+    const tableNo = String(u.tableNo ?? '').trim()
+    if (tableNo === slot.tableNo) continue
+    const fields: Record<string, unknown> = { [DUTY_FIELDS.tableNo]: tableNo }
+    if (slot.role === 'TM' && slot.title) {
+      const base = slot.title.replace(/\s*\S+卓$/, '')
+      fields[DUTY_FIELDS.name] = tableNo ? `${base} ${tableNo}卓` : base
+    }
+    updates.push({ record_id: slot.recordId, fields })
+  }
+  if (updates.length > 0) await updateRecords(env, TABLES.duties, updates)
+  return json({ saved: true, updated: updates.length })
 }
 
 /**
@@ -406,6 +482,14 @@ export default {
         if (!meetingId) return json({ error: 'meeting を指定してください' }, 400)
         if (req.method === 'GET') return await handleGet(env, meetingId)
         if (req.method === 'PUT') return await handlePut(env, meetingId, req)
+        return json({ error: 'GET か PUT を使ってください' }, 405)
+      }
+
+      if (url.pathname === '/api/duties') {
+        const meetingId = url.searchParams.get('meeting')
+        if (!meetingId) return json({ error: 'meeting を指定してください' }, 400)
+        if (req.method === 'GET') return await handleGetDuties(env, meetingId)
+        if (req.method === 'PUT') return await handlePutDuties(env, meetingId, req)
         return json({ error: 'GET か PUT を使ってください' }, 405)
       }
 

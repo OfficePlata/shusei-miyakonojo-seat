@@ -138,9 +138,13 @@ export function TableNode({
       {/* テーブル本体 */}
       {layout.body.shape === "round" ? (
         <button
+          // 卓の真ん中を掴んでも動かせる（以前は上の小さな「移動」つまみだけで、見つけにくかった）。
+          // 6px 動かすまではドラッグにならないので、クリックで卓を選ぶ操作はそのまま
+          {...listeners}
           onClick={() => onSelectTable(table.id)}
+          title="クリックで選択・ドラッグで移動"
           className={cn(
-            "absolute flex flex-col items-center justify-center rounded-full border-2 shadow-inner transition-colors",
+            "absolute flex cursor-grab touch-none flex-col items-center justify-center rounded-full border-2 shadow-inner transition-colors active:cursor-grabbing",
             isHead
               ? "border-amber-300 bg-gradient-to-b from-amber-50 to-amber-100"
               : "border-border bg-gradient-to-b from-white to-secondary",
@@ -172,9 +176,11 @@ export function TableNode({
         </button>
       ) : (
         <button
+          {...listeners}
           onClick={() => onSelectTable(table.id)}
+          title="クリックで選択・ドラッグで移動"
           className={cn(
-            "absolute flex items-center justify-center gap-2 rounded-lg border-2 shadow-inner transition-colors",
+            "absolute flex cursor-grab touch-none items-center justify-center gap-2 rounded-lg border-2 shadow-inner transition-colors active:cursor-grabbing",
             "border-amber-300 bg-gradient-to-b from-amber-50 to-amber-100",
             selected && "border-primary ring-2 ring-primary/40",
           )}

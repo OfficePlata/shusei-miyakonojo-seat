@@ -28,11 +28,15 @@ export const TABLES = {
 } as const
 
 export const DUTY_FIELDS = {
+  name: '当番名',
   meeting: '例会',
   role: '役割',
   personName: '担当者名',
+  /** TM・受付が座る卓。このツールの「当番の卓」で書き込む。自動配置はこの卓に固定する */
   tableNo: 'テーブル番号',
   status: '引受状況',
+  order: '表示順',
+  note: '備考',
 } as const
 
 export const MEETING_FIELDS = {

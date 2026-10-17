@@ -14,6 +14,7 @@ import { useStore } from "@/lib/store";
 import { nextTableName } from "@/lib/events";
 import { useCurrentEvent } from "@/lib/store";
 import {
+  ClipboardList,
   CloudDownload,
   CloudUpload,
   Eraser,
@@ -35,6 +36,7 @@ interface Props {
   onEditEvent: (e: SeatingEvent) => void;
   onAutoAssign: () => void;
   onTableConfig: () => void;
+  onDutyTables: () => void;
   onPrint: () => void;
 }
 
@@ -43,6 +45,7 @@ export function AppHeader({
   onEditEvent,
   onAutoAssign,
   onTableConfig,
+  onDutyTables,
   onPrint,
 }: Props) {
   const event = useCurrentEvent();
@@ -113,14 +116,14 @@ export function AppHeader({
   const handleAddTable = () => {
     if (!event) return;
     const name = nextTableName(event.tables);
-    const maxY = event.tables.reduce((m, t) => Math.max(m, t.y), 0);
     addTable({
       name,
       capacity: 8,
       shape: "round",
       kind: "normal",
-      x: 60,
-      y: maxY + 40,
+      // 位置はストアが空いているマスに決める（ここで渡す値は使われない）
+      x: 0,
+      y: 0,
     });
     toast.success(`テーブル「${name}」を追加しました`);
   };
@@ -168,6 +171,17 @@ export function AppHeader({
         >
           <LayoutGrid className="size-4" />
           レイアウト
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDutyTables}
+          className="hidden gap-1.5 text-white hover:bg-white/15 hover:text-white lg:inline-flex"
+          title="当番表の TM・受付に座る卓を割り振る"
+        >
+          <ClipboardList className="size-4" />
+          当番の卓
         </Button>
 
         <Button
@@ -278,6 +292,10 @@ export function AppHeader({
             <DropdownMenuItem onClick={onTableConfig} className="md:hidden">
               <LayoutGrid className="mr-2 size-4" />
               会場レイアウト設定
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onDutyTables} className="lg:hidden">
+              <ClipboardList className="mr-2 size-4" />
+              当番の卓（TM・受付）
             </DropdownMenuItem>
             <DropdownMenuItem onClick={handleLoad} className="lg:hidden">
               <CloudDownload className="mr-2 size-4" />

@@ -36,7 +36,8 @@ export function TableConfigDialog({ open, onOpenChange }: Props) {
       setOpts({
         tableCount: normal.length || DEFAULT_LAYOUT.tableCount,
         seatsPerTable: normal[0]?.capacity ?? DEFAULT_LAYOUT.seatsPerTable,
-        includeHeadTable: !!head,
+        // 来賓席は作らない。過去の下書きに残っていても、作り直すときは外す
+        includeHeadTable: false,
         headTableSeats: head?.capacity ?? DEFAULT_LAYOUT.headTableSeats,
         columns:
           new Set(normal.map((t) => t.x)).size || DEFAULT_LAYOUT.columns,
@@ -139,34 +140,7 @@ export function TableConfigDialog({ open, onOpenChange }: Props) {
             </Button>
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border bg-secondary/40 px-3 py-2.5">
-            <div>
-              <Label className="text-sm">来賓席（ヘッドテーブル）</Label>
-              <p className="text-xs text-muted-foreground">
-                来賓・役員用の卓を最前列に配置
-              </p>
-            </div>
-            <Switch
-              checked={opts.includeHeadTable}
-              onCheckedChange={(v) => set("includeHeadTable", v)}
-            />
-          </div>
-
-          {opts.includeHeadTable && (
-            <div className="space-y-1.5">
-              <Label htmlFor="hs">来賓席の席数</Label>
-              <Input
-                id="hs"
-                type="number"
-                min={2}
-                max={20}
-                value={opts.headTableSeats}
-                onChange={(e) =>
-                  set("headTableSeats", num(e.target.value, 2, 20, 6))
-                }
-              />
-            </div>
-          )}
+          {/* 来賓席の設定は外した。都城の例会では来賓席を使わない（2026-10-11 確認） */}
 
           <div className="flex items-center justify-between rounded-lg bg-primary/5 px-3 py-2.5 text-sm">
             <span className="text-muted-foreground">合計席数</span>

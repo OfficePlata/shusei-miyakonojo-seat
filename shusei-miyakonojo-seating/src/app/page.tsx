@@ -21,6 +21,7 @@ import { AttendeeDialog } from "@/components/attendee-dialog";
 import { ImportDialog } from "@/components/import-dialog";
 import { TableConfigDialog } from "@/components/table-config-dialog";
 import { AutoAssignDialog } from "@/components/auto-assign-dialog";
+import { DutyTablesDialog } from "@/components/duty-tables-dialog";
 import { EventDialog } from "@/components/event-dialog";
 import { PrintView } from "@/components/print-view";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ export default function Home() {
   const [importDialog, setImportDialog] = useState(false);
   const [tableConfig, setTableConfig] = useState(false);
   const [autoAssign, setAutoAssign] = useState(false);
+  const [dutyTables, setDutyTables] = useState(false);
   const [eventDialog, setEventDialog] = useState(false);
   const [editingEvent, setEditingEvent] = useState<SeatingEvent | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
@@ -56,6 +58,8 @@ export default function Home() {
   const assignSeat = useStore((s) => s.assignSeat);
   const unassign = useStore((s) => s.unassign);
   const moveTable = useStore((s) => s.moveTable);
+  const arrangeTables = useStore((s) => s.arrangeTables);
+  const layoutNonce = useStore((s) => s.layoutNonce);
   const selectedTableId = useStore((s) => s.selectedTableId);
 
   const loadMeetingsFromLark = useStore((s) => s.loadMeetingsFromLark);
@@ -182,6 +186,7 @@ export default function Home() {
           }}
           onAutoAssign={() => setAutoAssign(true)}
           onTableConfig={() => setTableConfig(true)}
+          onDutyTables={() => setDutyTables(true)}
           onPrint={() => setPrintOpen(true)}
         />
 
@@ -211,6 +216,11 @@ export default function Home() {
                   selectTable(null);
                 }}
                 onScaleChange={(s) => (scaleRef.current = s)}
+                fitKey={`${event.id}:${layoutNonce}:${event.tables.length}`}
+                onArrange={() => {
+                  arrangeTables();
+                  toast.success("卓を番号順に整列しました");
+                }}
               />
             )}
 
@@ -278,6 +288,7 @@ export default function Home() {
       <ImportDialog open={importDialog} onOpenChange={setImportDialog} />
       <TableConfigDialog open={tableConfig} onOpenChange={setTableConfig} />
       <AutoAssignDialog open={autoAssign} onOpenChange={setAutoAssign} />
+      <DutyTablesDialog open={dutyTables} onOpenChange={setDutyTables} />
       <EventDialog
         open={eventDialog}
         onOpenChange={setEventDialog}
