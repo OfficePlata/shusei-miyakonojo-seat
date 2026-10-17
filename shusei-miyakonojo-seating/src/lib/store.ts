@@ -11,14 +11,14 @@ import type {
 } from "./types";
 import { DEFAULT_RULES } from "./types";
 import {
-  CELL_H,
-  CELL_W,
-  compareTableName,
   DEFAULT_LAYOUT,
   EVENT_SEEDS,
+  columnsOf,
+  dropPosition,
+  fixOverlaps,
+  freeSlot,
   generateTables,
-  MARGIN_X,
-  MARGIN_Y,
+  layoutGrid,
   TableLayoutOptions,
   uid,
 } from "./events";
@@ -124,7 +124,10 @@ interface StoreState {
   /** 2回転目を捨てる */
   clearSecondRotation: () => void;
   /** 卓を横 cols 列のグリッドに並べ直す */
-  arrangeTables: (cols: number) => void;
+  /** 卓を並べ直すと 1 増える。キャンバスはこれを見て全体表示に合わせ直す */
+  layoutNonce: number;
+  /** cols を省くと、いまの列数のまま整列する */
+  arrangeTables: (cols?: number) => void;
 }
 
 /** 氏名の突合キー。当番表と出欠記録でスペースの有無が揺れる */
@@ -157,14 +160,18 @@ function touch(e: SeatingEvent): SeatingEvent {
  */
 function withoutHeadTables(e: SeatingEvent): SeatingEvent {
   const head = new Set(e.tables.filter((t) => t.kind === "head").map((t) => t.id));
-  if (head.size === 0) return e;
+  if (head.size === 0) {
+    // 卓の間隔が 260px 固定だった頃の配置は、10人掛けにすると重なっている。読み込み時に直す
+    const tables = fixOverlaps(e.tables);
+    return tables === e.tables ? e : { ...e, tables };
+  }
   if (e.assignments.length === 0 && !e.assignments2?.length) {
     return { ...e, tables: generateTables(DEFAULT_LAYOUT) };
   }
   const keep = (a: { tableId: string }) => !head.has(a.tableId);
   return {
     ...e,
-    tables: e.tables.filter((t) => !head.has(t.id)),
+    tables: fixOverlaps(e.tables.filter((t) => !head.has(t.id))),
     assignments: e.assignments.filter(keep),
     assignments2: e.assignments2?.filter(keep),
   };
@@ -186,6 +193,7 @@ export const useStore = create<StoreState>()(
         currentEventId: "",
         rules: DEFAULT_RULES,
         activeRotation: 1 as 1 | 2,
+        layoutNonce: 0,
         selectedAttendeeId: null,
         selectedTableId: null,
         sync: "idle",
@@ -284,7 +292,7 @@ export const useStore = create<StoreState>()(
                 // まだ誰も座らせていない下書きは、古い既定（12卓・来賓席つき）のまま残っていることがあるので
                 // 今の既定で作り直す。割り当て済みの下書きは人の作業なので卓を残す
                 const tables = data.layout?.tables?.length
-                  ? data.layout.tables
+                  ? fixOverlaps(data.layout.tables)
                   : e.assignments.length === 0
                     ? generateTables(DEFAULT_LAYOUT)
                     : e.tables.filter((t) => t.kind !== "head");
@@ -312,6 +320,8 @@ export const useStore = create<StoreState>()(
                 });
               }),
             }));
+            // 読み込んだ配置で全体表示に合わせ直す（重なりを直して位置が変わることがある）
+            set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
             return count;
           } finally {
             set({ sync: "idle" });
@@ -463,14 +473,17 @@ export const useStore = create<StoreState>()(
         addTable: (t) =>
           mutateCurrent((e) => ({
             ...e,
-            tables: [...e.tables, { ...t, id: uid("tbl") }],
+            // 渡された位置ではなく、どの卓とも重ならない最初のマスに置く
+            tables: [...e.tables, { ...t, ...freeSlot(e.tables, t), id: uid("tbl") }],
           })),
 
         updateTable: (id, patch) =>
-          mutateCurrent((e) => ({
-            ...e,
-            tables: e.tables.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-          })),
+          mutateCurrent((e) => {
+            const tables = e.tables.map((t) => (t.id === id ? { ...t, ...patch } : t));
+            // 人数や形を変えると卓が大きくなって隣と重なることがある。そのときだけ並べ直す
+            const resized = patch.capacity !== undefined || patch.shape !== undefined;
+            return { ...e, tables: resized ? fixOverlaps(tables) : tables };
+          }),
 
         removeTable: (id) =>
           mutateCurrent((e) => ({
@@ -479,19 +492,24 @@ export const useStore = create<StoreState>()(
             assignments: e.assignments.filter((a) => a.tableId !== id),
           })),
 
-        regenerateTables: (opts) =>
+        regenerateTables: (opts) => {
           mutateCurrent((e) => ({
             ...e,
             tables: generateTables(opts),
             assignments: [],
             lockedAttendeeIds: [],
-          })),
+          }));
+          set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
+        },
 
         moveTable: (id, x, y) =>
-          mutateCurrent((e) => ({
-            ...e,
-            tables: e.tables.map((t) => (t.id === id ? { ...t, x, y } : t)),
-          })),
+          mutateCurrent((e) => {
+            const moving = e.tables.find((t) => t.id === id);
+            if (!moving) return e;
+            // 他の卓に重ねて落としたら、近くの空いているマスへ寄せる
+            const pos = dropPosition(e.tables, moving, x, y);
+            return { ...e, tables: e.tables.map((t) => (t.id === id ? { ...t, ...pos } : t)) };
+          }),
 
         assignSeat: (attendeeId, tableId, seatIndex) =>
           mutateCurrent((e) => {
@@ -651,28 +669,10 @@ export const useStore = create<StoreState>()(
           mutateCurrent((e) => ({ ...e, assignments2: undefined }));
         },
 
-        arrangeTables: (cols) =>
-          mutateCurrent((e) => {
-            const c = Math.max(1, Math.floor(cols));
-            const head = e.tables.filter((t) => t.kind === "head");
-            const normal = e.tables
-              .filter((t) => t.kind !== "head")
-              .sort((a, b) => compareTableName(a.name, b.name));
-            const startY = head.length ? MARGIN_Y + CELL_H : MARGIN_Y;
-            const placed = [
-              ...head.map((t) => ({
-                ...t,
-                x: MARGIN_X + ((c - 1) * CELL_W) / 2,
-                y: MARGIN_Y,
-              })),
-              ...normal.map((t, i) => ({
-                ...t,
-                x: MARGIN_X + (i % c) * CELL_W,
-                y: startY + Math.floor(i / c) * CELL_H,
-              })),
-            ];
-            return { ...e, tables: placed };
-          }),
+        arrangeTables: (cols) => {
+          mutateCurrent((e) => ({ ...e, tables: layoutGrid(e.tables, cols ?? columnsOf(e.tables)) }));
+          set((st) => ({ layoutNonce: st.layoutNonce + 1 }));
+        },
       };
     },
     {

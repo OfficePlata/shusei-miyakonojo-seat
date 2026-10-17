@@ -116,14 +116,14 @@ export function AppHeader({
   const handleAddTable = () => {
     if (!event) return;
     const name = nextTableName(event.tables);
-    const maxY = event.tables.reduce((m, t) => Math.max(m, t.y), 0);
     addTable({
       name,
       capacity: 8,
       shape: "round",
       kind: "normal",
-      x: 60,
-      y: maxY + 40,
+      // 位置はストアが空いているマスに決める（ここで渡す値は使われない）
+      x: 0,
+      y: 0,
     });
     toast.success(`テーブル「${name}」を追加しました`);
   };

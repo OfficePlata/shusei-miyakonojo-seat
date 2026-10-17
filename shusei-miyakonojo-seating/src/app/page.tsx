@@ -58,6 +58,8 @@ export default function Home() {
   const assignSeat = useStore((s) => s.assignSeat);
   const unassign = useStore((s) => s.unassign);
   const moveTable = useStore((s) => s.moveTable);
+  const arrangeTables = useStore((s) => s.arrangeTables);
+  const layoutNonce = useStore((s) => s.layoutNonce);
   const selectedTableId = useStore((s) => s.selectedTableId);
 
   const loadMeetingsFromLark = useStore((s) => s.loadMeetingsFromLark);
@@ -214,6 +216,11 @@ export default function Home() {
                   selectTable(null);
                 }}
                 onScaleChange={(s) => (scaleRef.current = s)}
+                fitKey={`${event.id}:${layoutNonce}:${event.tables.length}`}
+                onArrange={() => {
+                  arrangeTables();
+                  toast.success("卓を番号順に整列しました");
+                }}
               />
             )}
 
