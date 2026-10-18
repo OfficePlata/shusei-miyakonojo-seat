@@ -3,7 +3,7 @@
 import type { Assignment, Attendee, SeatingTable } from "@/lib/types";
 import type { useCurrentEvent } from "@/lib/store";
 import { formatEventDate } from "@/lib/ui-helpers";
-import { byVenueRoleKana } from "@/lib/venue-order";
+import { byVenueKana, byVenueRoleBadgeKana } from "@/lib/venue-order";
 
 /**
  * 受付・冊子用の名簿（「元データ」の紙）を、座席表と同じデータから刷る。
@@ -131,7 +131,7 @@ export function RosterSheet({
         {other.length > 0 && (
           <>
             <Band title="他会場" count={other.length} tone="kin" />
-            <Table head={head} widths={widths} rows={rows([...other].sort(byVenueRoleKana), (a) => a.venue ?? "")} center={[0, 1, 2, 3, 4, 9, 10]} strong={[5]} />
+            <Table head={head} widths={widths} rows={rows([...other].sort(byVenueRoleBadgeKana), (a) => a.venue ?? "")} center={[0, 1, 2, 3, 4, 9, 10]} strong={[5]} />
           </>
         )}
         {guest.length > 0 && (
@@ -143,8 +143,8 @@ export function RosterSheet({
       </>
     );
   } else if (doc === "own" || doc === "other") {
-    // 他会場は会場ごとに固めて（会場は五十音、その中は役職順）、受付で探しやすくする
-    const list = doc === "own" ? [...home].sort(byKana) : [...other].sort(byVenueRoleKana);
+    // 他会場は会場ごとに固めて（会場は五十音、その中はフリガナ順）、受付で探しやすくする
+    const list = doc === "own" ? [...home].sort(byKana) : [...other].sort(byVenueKana);
     title = `${event.title}　出席者名簿　${doc === "own" ? "都城会場" : "他会場"}`;
     stat = { label: "出席者", value: list.length };
     const groups: { venue: string; people: Attendee[] }[] = [];
@@ -217,10 +217,10 @@ export function RosterSheet({
       </>
     );
   } else {
-    // ブース：自会場（フリガナ順）→ 他会場（会場の五十音 → 役職 → フリガナ）
+    // ブース：自会場（フリガナ順）→ 他会場（会場の五十音 → フリガナ）
     const list = [
       ...home.filter((a) => a.sheet?.booth).sort(byKana),
-      ...other.filter((a) => a.sheet?.booth).sort(byVenueRoleKana),
+      ...other.filter((a) => a.sheet?.booth).sort(byVenueKana),
     ];
     title = "ブース出展者";
     stat = { label: "出展", value: list.length };

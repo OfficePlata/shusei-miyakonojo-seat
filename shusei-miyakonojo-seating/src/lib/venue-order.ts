@@ -1,7 +1,7 @@
 import type { Attendee } from "@/lib/types";
 
 /**
- * 他会場の並び：会場（五十音）→ 守成役職 → フリガナ。
+ * 他会場の並び。受付用は 会場（五十音）→ フリガナ、冊子用は 会場（五十音）→ 守成役職 → バッジ → フリガナ。
  *
  * 会場名は「宮崎会場」のような漢字で、localeCompare("ja") では読みの順にならない
  * （漢字は文字コード寄りの順に並ぶ）。なので会場の読みをここで持つ。
@@ -99,7 +99,8 @@ const VENUE_KANA: Record<string, string> = {
   旭川: "あさひかわ",
 };
 
-const RANK: Record<string, number> = { 代表: 0, 副代表: 1, 世話人: 2, 一般: 3 };
+const ROLE_RANK: Record<string, number> = { 代表: 0, 副代表: 1, 世話人: 2, 一般: 3 };
+const BADGE_RANK: Record<string, number> = { ゴールド: 0, 赤: 1, 緑: 2 };
 
 /** 「宮崎会場」→「みやざき」。表に無ければ会場名（「会場」を外したもの）を返す */
 export function venueKana(venue: string): string {
@@ -107,14 +108,18 @@ export function venueKana(venue: string): string {
   return VENUE_KANA[base] ?? base;
 }
 
-export const byVenue = (a: string, b: string) =>
-  venueKana(a).localeCompare(venueKana(b), "ja");
+const byVenue = (a: Attendee, b: Attendee) =>
+  venueKana(a.venue ?? "").localeCompare(venueKana(b.venue ?? ""), "ja");
 
 const kanaOf = (a: Attendee) => (a.kana || a.name).replace(/[\s　]/g, "");
+const byKana = (a: Attendee, b: Attendee) => kanaOf(a).localeCompare(kanaOf(b), "ja");
 
-/** 他会場の並び：会場（五十音）→ 守成役職（代表→副代表→世話人→一般）→ フリガナ */
-export const byVenueRoleKana = (a: Attendee, b: Attendee) =>
-  byVenue(a.venue ?? "", b.venue ?? "") ||
-  (RANK[a.sheet?.memberType ?? ""] ?? 9) -
-    (RANK[b.sheet?.memberType ?? ""] ?? 9) ||
-  kanaOf(a).localeCompare(kanaOf(b), "ja");
+/** 受付用：会場（五十音）→ フリガナ。受付では名前で探すので役職は混ぜない */
+export const byVenueKana = (a: Attendee, b: Attendee) => byVenue(a, b) || byKana(a, b);
+
+/** 冊子用：会場（五十音）→ 守成役職（代表→副代表→世話人→一般）→ バッジ（ゴールド→赤→緑）→ フリガナ */
+export const byVenueRoleBadgeKana = (a: Attendee, b: Attendee) =>
+  byVenue(a, b) ||
+  (ROLE_RANK[a.sheet?.memberType ?? ""] ?? 9) - (ROLE_RANK[b.sheet?.memberType ?? ""] ?? 9) ||
+  (BADGE_RANK[a.sheet?.badge ?? ""] ?? 9) - (BADGE_RANK[b.sheet?.badge ?? ""] ?? 9) ||
+  byKana(a, b);
