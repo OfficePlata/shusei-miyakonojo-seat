@@ -3,6 +3,7 @@
 import type { Assignment, Attendee, SeatingTable } from "@/lib/types";
 import type { useCurrentEvent } from "@/lib/store";
 import { formatEventDate } from "@/lib/ui-helpers";
+import { byVenueRoleKana } from "@/lib/venue-order";
 
 /**
  * 受付・冊子用の名簿（「元データ」の紙）を、座席表と同じデータから刷る。
@@ -130,7 +131,7 @@ export function RosterSheet({
         {other.length > 0 && (
           <>
             <Band title="他会場" count={other.length} tone="kin" />
-            <Table head={head} widths={widths} rows={rows([...other].sort(byBadgeRoleKana), (a) => a.venue ?? "")} center={[0, 1, 2, 3, 4, 9, 10]} strong={[5]} />
+            <Table head={head} widths={widths} rows={rows([...other].sort(byVenueRoleKana), (a) => a.venue ?? "")} center={[0, 1, 2, 3, 4, 9, 10]} strong={[5]} />
           </>
         )}
         {guest.length > 0 && (
@@ -142,36 +143,50 @@ export function RosterSheet({
       </>
     );
   } else if (doc === "own" || doc === "other") {
-    const list = [...(doc === "own" ? home : other)].sort(byKana);
+    // 他会場は会場ごとに固めて（会場は五十音、その中は役職順）、受付で探しやすくする
+    const list = doc === "own" ? [...home].sort(byKana) : [...other].sort(byVenueRoleKana);
     title = `${event.title}　出席者名簿　${doc === "own" ? "都城会場" : "他会場"}`;
     stat = { label: "出席者", value: list.length };
+    const groups: { venue: string; people: Attendee[] }[] = [];
+    for (const a of list) {
+      const v = doc === "own" ? "" : (a.venue ?? "").trim();
+      const last = groups[groups.length - 1];
+      if (last && last.venue === v) last.people.push(a);
+      else groups.push({ venue: v, people: [a] });
+    }
+    const no = new Map(list.map((a, i) => [a.id, i + 1]));
     body = (
       <>
-        <Table
-          head={["No.", "ブース出展", "チラシPR", "商談報告", "二部会", "バッジ購入", "名札購入", "座席1回目", "座席2回目", "名前", "フリガナ", "キャンセル", "会場名", "守成役職", "バッチ", "会社名（屋号）", "紹介者"]}
-          widths={[30, 40, 40, 40, 52, 40, 40, 44, 44, 96, 112, 44, 92, 56, 60, 0, 88]}
-          rows={list.map((a, i) => [
-            String(i + 1),
-            mark(a.sheet?.booth),
-            mark(a.sheet?.flyer),
-            mark(a.sheet?.negotiation),
-            a.sheet?.afterParty === "参加予定" ? "参加予定" : "",
-            "",
-            "",
-            ...seatCols(a),
-            a.name,
-            a.kana ?? "",
-            "",
-            doc === "own" ? "都城会場" : (a.venue ?? ""),
-            a.sheet?.memberType ?? "",
-            a.sheet?.badge ?? "",
-            a.company,
-            a.sheet?.referrer || "",
-          ])}
-          center={[0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 14]}
-          strong={[7, 8, 9]}
-          tall
-        />
+        {groups.map((g) => (
+          <div key={g.venue || "home"}>
+            {doc === "other" && <Band title={g.venue} count={g.people.length} tone="kin" />}
+            <Table
+              head={["No.", "ブース出展", "チラシPR", "商談報告", "二部会", "バッジ購入", "名札購入", "座席1回目", "座席2回目", "名前", "フリガナ", "キャンセル", "会場名", "守成役職", "バッチ", "会社名（屋号）", "紹介者"]}
+              widths={[30, 40, 40, 40, 52, 40, 40, 44, 44, 96, 112, 44, 92, 56, 60, 0, 88]}
+              rows={g.people.map((a) => [
+                String(no.get(a.id)),
+                mark(a.sheet?.booth),
+                mark(a.sheet?.flyer),
+                mark(a.sheet?.negotiation),
+                a.sheet?.afterParty === "参加予定" ? "参加予定" : "",
+                "",
+                "",
+                ...seatCols(a),
+                a.name,
+                a.kana ?? "",
+                "",
+                doc === "own" ? "都城会場" : (a.venue ?? ""),
+                a.sheet?.memberType ?? "",
+                a.sheet?.badge ?? "",
+                a.company,
+                a.sheet?.referrer || "",
+              ])}
+              center={[0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 14]}
+              strong={[7, 8, 9]}
+              tall
+            />
+          </div>
+        ))}
         {doc === "other" && <Totals count={list.length} />}
       </>
     );
@@ -202,10 +217,10 @@ export function RosterSheet({
       </>
     );
   } else {
-    // ブース：自会場 → 他会場、それぞれフリガナ順（元の紙の並び）
+    // ブース：自会場（フリガナ順）→ 他会場（会場の五十音 → 役職 → フリガナ）
     const list = [
       ...home.filter((a) => a.sheet?.booth).sort(byKana),
-      ...other.filter((a) => a.sheet?.booth).sort(byKana),
+      ...other.filter((a) => a.sheet?.booth).sort(byVenueRoleKana),
     ];
     title = "ブース出展者";
     stat = { label: "出展", value: list.length };
