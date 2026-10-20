@@ -130,3 +130,55 @@ export async function saveDuties(
   }
   return data;
 }
+
+/** 参加者を手で足すときに Lark へ送る値。区分は category と venue（あれば他会場）で決まる */
+export interface AttendeeInput {
+  name: string;
+  kana?: string;
+  company?: string;
+  category: "member" | "guest";
+  venue?: string;
+  referrer?: string;
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    ...(body === undefined
+      ? {}
+      : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  });
+  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!res.ok || !data) {
+    throw new Error(data?.error ?? `保存に失敗しました（HTTP ${res.status}）`);
+  }
+  return data;
+}
+
+/**
+ * 参加者を Lark の出欠記録へ足す（手動出欠=出席）。翌朝の本部HPの取り込みでも消えない。
+ * 返り値は参加者を取得したときと同じ形の1人（id は出欠記録の record_id）
+ */
+export async function addAttendeeToLark(
+  meetingId: string,
+  input: AttendeeInput,
+): Promise<{ attendee: Attendee; created: boolean }> {
+  return send("POST", `/api/attendees?meeting=${encodeURIComponent(meetingId)}`, input);
+}
+
+/**
+ * 参加者を外す（手動出欠=欠席・卓を空ける）。手で足しただけの人は出欠記録の行ごと消える（deleted）。
+ * 元に戻すのはポータルの出欠回答一覧「手で変えた出欠」から
+ */
+export async function removeAttendeeFromLark(
+  meetingId: string,
+  attendeeId: string,
+): Promise<{ removed: true; deleted: boolean }> {
+  return send(
+    "DELETE",
+    `/api/attendees?meeting=${encodeURIComponent(meetingId)}&id=${encodeURIComponent(attendeeId)}`,
+  );
+}
+
+/** Lark の例会・参加者か（record_id）。手元だけの例会やツールで足した人は uid（evt-・att-） */
+export const isLarkId = (id: string): boolean => /^rec[A-Za-z0-9]+$/.test(id);

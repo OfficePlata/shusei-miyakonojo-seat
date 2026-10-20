@@ -1,7 +1,8 @@
 /**
  * Lark BASE への最小クライアント。
  *
- * 座席表ツールが使うのは「例会マスタを読む」「出欠記録を読む」「卓割を書き戻す」の3つだけ。
+ * 座席表ツールが使うのは「例会マスタを読む」「出欠記録を読む」「卓割を書き戻す」と、
+ * 参加者を手で足す・外す（出欠記録の行の作成・削除と「手動出欠」の書き換え）。
  * sewaninja-portal 側の src/lark/* から必要な部分だけを持ってきている。
  * フィールド名は sewaninja-portal/docs/base-schema.md が正。片方だけ直さない。
  */
@@ -68,7 +69,22 @@ export const ATTENDANCE_FIELDS = {
   // 2026-10-11 追加。他会場のみ（本部シート由来）。自会場は会員データ_最新が正
   memberType: '会員種別',
   badge: '会員分類',
+  // 参加者を手で足すときに使う（ポータルの src/routes/attendanceManage.ts と同じ書き方）
+  channel: '回答経路',
+  member: '会員',
+  lineUserId: 'line_user_id',
+  answeredAt: '回答日時',
 } as const
+
+/**
+ * 出欠記録の「手動出欠」（単一選択 出席 / 欠席。2026-10-20 追加）。
+ * このツールとポータルの受付名簿で足した／外した参加者。**入っていれば「出欠」より優先する。**
+ * 本部HPの取り込みはこの欄に触れないので、翌朝の同期でも戻らない
+ */
+export const MANUAL_ANSWER_FIELD = '手動出欠'
+
+/** 回答経路の実値。手で足した行は「世話人代行」にする */
+export const CHANNEL_PROXY = '世話人代行'
 
 // ポータルと同じ KV namespace を共有しているのでキーを分ける
 const TOKEN_KEY = 'seat:lark:tenant_access_token'
@@ -167,6 +183,31 @@ export async function updateRecord(
     env,
     `/open-apis/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${table}/records/${recordId}`,
     { method: 'PUT', body: { fields } },
+  )
+}
+
+/** レコードを1件足す。返り値は新しい record_id */
+export async function createRecord(
+  env: Bindings,
+  table: string,
+  fields: Record<string, unknown>,
+): Promise<string> {
+  const data = await larkFetch<{ record?: { record_id?: string } }>(
+    env,
+    `/open-apis/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${table}/records`,
+    { method: 'POST', body: { fields } },
+  )
+  const id = data.record?.record_id
+  if (!id) throw new LarkError('Lark API が record_id を返しませんでした')
+  return id
+}
+
+/** レコードを1件消す。**元に戻せない** */
+export async function deleteRecord(env: Bindings, table: string, recordId: string): Promise<void> {
+  await larkFetch(
+    env,
+    `/open-apis/bitable/v1/apps/${env.LARK_BASE_APP_TOKEN}/tables/${table}/records/${recordId}`,
+    { method: 'DELETE' },
   )
 }
 

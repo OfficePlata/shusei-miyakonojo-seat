@@ -25,10 +25,13 @@ import {
 import { createSampleAttendees } from "./sample-data";
 import { autoAssign } from "./auto-assign";
 import {
+  addAttendeeToLark,
   fetchMeetings,
   fetchSeating,
+  removeAttendeeFromLark,
   saveSeating,
   toDateString,
+  type AttendeeInput,
   type SaveResult,
 } from "./lark";
 
@@ -70,6 +73,13 @@ interface StoreState {
   loadMeetingsFromLark: () => Promise<void>;
   loadAttendeesFromLark: (meetingId?: string) => Promise<number>;
   saveSeatingToLark: () => Promise<SaveResult>;
+  /**
+   * 参加者を Lark の出欠記録へ足して、画面にも加える。卓割の作業中でも手元の配置は崩さない
+   * （参加者を取得し直すと保存前の配置が消えるため、返ってきた1人だけを足す）
+   */
+  addAttendeeToLark: (input: AttendeeInput) => Promise<Attendee>;
+  /** 参加者を Lark で外して（手動出欠=欠席）、画面からも消す */
+  removeAttendeeFromLark: (id: string) => Promise<{ deleted: boolean }>;
 
   // event
   setCurrentEvent: (id: string) => void;
@@ -354,6 +364,31 @@ export const useStore = create<StoreState>()(
           }
         },
 
+        addAttendeeToLark: async (input) => {
+          const eventId = get().currentEventId;
+          if (!eventId) throw new Error("例会が選ばれていません");
+          const { attendee } = await addAttendeeToLark(eventId, input);
+          set((state) => ({
+            events: state.events.map((e) =>
+              e.id === eventId
+                ? touch({
+                    ...e,
+                    attendees: [...e.attendees.filter((a) => a.id !== attendee.id), attendee],
+                  })
+                : e,
+            ),
+          }));
+          return attendee;
+        },
+
+        removeAttendeeFromLark: async (id) => {
+          const eventId = get().currentEventId;
+          if (!eventId) throw new Error("例会が選ばれていません");
+          const { deleted } = await removeAttendeeFromLark(eventId, id);
+          get().removeAttendee(id);
+          return { deleted };
+        },
+
         setCurrentEvent: (id) =>
           set({
             currentEventId: id,
@@ -438,6 +473,8 @@ export const useStore = create<StoreState>()(
             ...e,
             attendees: e.attendees.filter((a) => a.id !== id),
             assignments: e.assignments.filter((x) => x.attendeeId !== id),
+            // 2回転目にも座っているので両方から外す。残すと居ない人が卓に座り続ける
+            assignments2: e.assignments2?.filter((x) => x.attendeeId !== id),
             lockedAttendeeIds: e.lockedAttendeeIds.filter((x) => x !== id),
           })),
 
