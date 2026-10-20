@@ -101,11 +101,17 @@ export function AppHeader({
     if (!event) return;
     try {
       const r = await saveSeating();
-      const extra =
-        r.unknownAttendees > 0
-          ? `（このツールで手で足した ${r.unknownAttendees} 名は Lark に行が無いため保存できません）`
-          : "";
-      toast.success(`卓割を保存しました。${r.updated} 名に反映${extra}`);
+      const added =
+        r.registered.length > 0 ? `（${r.registered.join("・")} さんを Lark の出欠記録に追加）` : "";
+      toast.success(`卓割を保存しました。${r.updated} 名に反映${added}`);
+      // 受付名簿・印刷に出ない人は見落とされないよう、閉じるまで残す
+      if (r.unregistered.length > 0 || r.unknownAttendees > 0) {
+        toast.error(
+          `Lark に登録できなかった人がいます: ${r.unregistered.join("・") || `${r.unknownAttendees} 名`}。` +
+            "受付名簿・印刷に出ません。ポータルの受付名簿「手で追加」から足してください",
+          { duration: Infinity },
+        );
+      }
     } catch (e) {
       toast.error(
         `保存できませんでした: ${e instanceof Error ? e.message : String(e)}`,

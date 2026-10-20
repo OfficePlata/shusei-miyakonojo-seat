@@ -28,6 +28,7 @@ import {
   addAttendeeToLark,
   fetchMeetings,
   fetchSeating,
+  isLarkId,
   removeAttendeeFromLark,
   saveSeating,
   toDateString,
@@ -72,7 +73,7 @@ interface StoreState {
   // Lark 連携
   loadMeetingsFromLark: () => Promise<void>;
   loadAttendeesFromLark: (meetingId?: string) => Promise<number>;
-  saveSeatingToLark: () => Promise<SaveResult>;
+  saveSeatingToLark: () => Promise<SaveResult & { registered: string[]; unregistered: string[] }>;
   /**
    * 参加者を Lark の出欠記録へ足して、画面にも加える。卓割の作業中でも手元の配置は崩さない
    * （参加者を取得し直すと保存前の配置が消えるため、返ってきた1人だけを足す）
@@ -185,6 +186,72 @@ function withoutHeadTables(e: SeatingEvent): SeatingEvent {
     assignments: e.assignments.filter(keep),
     assignments2: e.assignments2?.filter(keep),
   };
+}
+
+/**
+ * 卓に座らせた人のうち、このツールの中だけに居る人（会員・ゲスト）を Lark の出欠記録へ登録し、
+ * 卓割・固定・同席指定の id を Lark の record_id に付け替える。
+ * すでに Lark に居ると断られた人や、Lark に区分の無い来賓・事務局は unregistered に名前を返す
+ */
+async function registerLocalAttendees(
+  eventId: string,
+  get: () => StoreState,
+  set: (fn: (s: StoreState) => Partial<StoreState>) => void,
+): Promise<{ registered: string[]; unregistered: string[] }> {
+  const e = get().events.find((x) => x.id === eventId);
+  if (!e || !isLarkId(e.id)) return { registered: [], unregistered: [] };
+  const seated = new Set([...e.assignments, ...(e.assignments2 ?? [])].map((a) => a.attendeeId));
+  const locals = e.attendees.filter((a) => !isLarkId(a.id) && seated.has(a.id));
+
+  const swap = new Map<string, Attendee>();
+  const unregistered: string[] = [];
+  for (const a of locals) {
+    if (a.category !== "member" && a.category !== "guest") {
+      unregistered.push(a.name);
+      continue;
+    }
+    try {
+      const { attendee } = await addAttendeeToLark(eventId, {
+        name: a.name,
+        kana: a.kana ?? "",
+        company: a.company ?? "",
+        category: a.category,
+        venue: a.category === "guest" ? "" : (a.venue ?? ""),
+        referrer: a.category === "guest" ? (a.referrer ?? "") : "",
+      });
+      // Lark に持たない項目（業種・役割・班・備考など）は手元の値を残す
+      swap.set(a.id, { ...a, ...attendee, id: attendee.id });
+    } catch {
+      unregistered.push(a.name);
+    }
+  }
+  if (swap.size === 0) return { registered: [], unregistered };
+
+  const re = (id: string) => swap.get(id)?.id ?? id;
+  const reAssign = <T extends { attendeeId: string }>(list: T[]) =>
+    list.map((x) => ({ ...x, attendeeId: re(x.attendeeId) }));
+  set((state) => ({
+    events: state.events.map((x) =>
+      x.id !== eventId
+        ? x
+        : touch({
+            ...x,
+            attendees: x.attendees.map((a) => {
+              const b = swap.get(a.id) ?? a;
+              return {
+                ...b,
+                keepWith: b.keepWith?.map(re),
+                keepApart: b.keepApart?.map(re),
+              };
+            }),
+            assignments: reAssign(x.assignments),
+            assignments2: x.assignments2 ? reAssign(x.assignments2) : undefined,
+            lockedAttendeeIds: x.lockedAttendeeIds?.map(re),
+          }),
+    ),
+    selectedAttendeeId: state.selectedAttendeeId ? re(state.selectedAttendeeId) : null,
+  }));
+  return { registered: [...swap.values()].map((a) => a.name), unregistered };
 }
 
 export const useStore = create<StoreState>()(
@@ -340,12 +407,23 @@ export const useStore = create<StoreState>()(
 
         /** いまの卓割を Lark へ保存する。受付名簿がこの結果を読む */
         saveSeatingToLark: async () => {
-          const state = get();
-          const e = state.events.find((x) => x.id === state.currentEventId);
-          if (!e) throw new Error("例会が選ばれていません");
+          const before = get();
+          if (!before.events.some((x) => x.id === before.currentEventId)) {
+            throw new Error("例会が選ばれていません");
+          }
 
           set({ sync: "saving" });
           try {
+            // 卓に座らせた人のうち、このツールの中だけに居る人（id が uid）を先に Lark へ登録する。
+            // 古い画面のまま足した・CSV で足した人は Lark に行が無く、保存しても受付名簿・印刷に出なかった（2026-10-20）
+            const { registered, unregistered } = await registerLocalAttendees(
+              before.currentEventId as string,
+              get,
+              set,
+            );
+            const state = get();
+            const e = state.events.find((x) => x.id === state.currentEventId);
+            if (!e) throw new Error("例会が選ばれていません");
             // 受付名簿に出す卓番号は必ず1回転目。2回転目を見ている最中でも入れ替えない
             const first =
               state.activeRotation === 2 ? (e.assignments2 ?? e.assignments) : e.assignments;
@@ -358,7 +436,7 @@ export const useStore = create<StoreState>()(
               lockedAttendeeIds: e.lockedAttendeeIds,
             });
             set({ syncedAt: Date.now() });
-            return result;
+            return { ...result, registered, unregistered };
           } finally {
             set({ sync: "idle" });
           }
