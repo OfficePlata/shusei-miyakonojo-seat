@@ -30,6 +30,7 @@ import {
   DUTY_ORDER,
 } from "@/lib/types";
 import { INDUSTRIES, VENUES } from "@/lib/sample-data";
+import { isLarkId } from "@/lib/lark";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -61,7 +62,18 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
   const addAttendee = useStore((s) => s.addAttendee);
   const updateAttendee = useStore((s) => s.updateAttendee);
   const removeAttendee = useStore((s) => s.removeAttendee);
+  const addToLark = useStore((s) => s.addAttendeeToLark);
+  const removeFromLark = useStore((s) => s.removeAttendeeFromLark);
   const [form, setForm] = useState<Omit<Attendee, "id">>(empty);
+  const [busy, setBusy] = useState(false);
+  /**
+   * Lark の例会では、追加・削除を Lark の出欠記録へ保存する（受付名簿・ポータルにも効き、翌朝の取り込みでも戻らない）。
+   * Lark に区分が無い来賓・事務局は選ばせない
+   */
+  const larkMode = !!event && isLarkId(event.id);
+  const categories = larkMode
+    ? CATEGORY_ORDER.filter((c) => c === "member" || c === "guest")
+    : CATEGORY_ORDER;
 
   useEffect(() => {
     if (open) {
@@ -72,7 +84,7 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.name.trim()) {
       toast.error("氏名を入力してください");
       return;
@@ -80,11 +92,70 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
     if (editing) {
       updateAttendee(editing.id, form);
       toast.success("出席者を更新しました");
+    } else if (larkMode) {
+      setBusy(true);
+      try {
+        const added = await addToLark({
+          name: form.name.trim(),
+          kana: form.kana,
+          company: form.company,
+          category: form.category === "guest" ? "guest" : "member",
+          venue: form.venue,
+          referrer: form.category === "guest" ? form.referrer : "",
+        });
+        // Lark に持たない項目（業種・役割・班・備考・初参加）は、入れた分だけこの端末の下書きに足す
+        const local: Partial<Attendee> = {};
+        if (form.industry.trim()) local.industry = form.industry.trim();
+        if (form.duties?.length) {
+          local.duties = [...new Set([...(added.duties ?? []), ...form.duties])];
+        }
+        if (form.group?.trim()) local.group = form.group.trim();
+        if (form.notes?.trim()) local.notes = form.notes.trim();
+        if (form.isFirstTime) local.isFirstTime = true;
+        if (Object.keys(local).length > 0) updateAttendee(added.id, local);
+        toast.success(`「${added.name}」さんを Lark の出欠記録に追加しました`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "追加に失敗しました");
+        return;
+      } finally {
+        setBusy(false);
+      }
     } else {
       addAttendee(form);
       toast.success("出席者を追加しました");
     }
     onOpenChange(false);
+  };
+
+  const remove = async () => {
+    if (!editing) return;
+    if (!(larkMode && isLarkId(editing.id))) {
+      if (confirm(`「${editing.name}」を削除しますか？`)) {
+        removeAttendee(editing.id);
+        toast.success("削除しました");
+        onOpenChange(false);
+      }
+      return;
+    }
+    const ok = confirm(
+      `「${editing.name}」さんを参加者から外します。Lark の出欠記録に保存され、受付名簿からも消えます（卓も空きます）。よろしいですか？\n` +
+        "（本部HPの回答はそのままです。ポータルの出欠回答一覧から元に戻せます）",
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const { deleted } = await removeFromLark(editing.id);
+      toast.success(
+        deleted
+          ? `手で追加した「${editing.name}」さんを出欠記録から消しました`
+          : `「${editing.name}」さんを参加者から外しました`,
+      );
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "外せませんでした");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const members =
@@ -98,6 +169,19 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
           <DialogTitle>{editing ? "出席者を編集" : "出席者を追加"}</DialogTitle>
           <DialogDescription>
             氏名と会社・業種・区分を入力してください。業種は座席の分散に使われます。
+            {larkMode && !editing && (
+              <>
+                <br />
+                追加すると Lark の出欠記録に入ります（受付名簿にも載り、翌朝の本部HPの取り込みでも消えません）。
+                所属会場を入れた会員は他会場として登録します。
+              </>
+            )}
+            {larkMode && editing && (
+              <>
+                <br />
+                ここでの編集はこの端末の下書きだけです。「削除」は Lark の出欠記録にも保存されます。
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -161,7 +245,7 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORY_ORDER.map((c) => (
+                  {categories.map((c) => (
                     <SelectItem key={c} value={c}>
                       {CATEGORY_LABELS[c]}
                     </SelectItem>
@@ -289,13 +373,8 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
             <Button
               variant="ghost"
               className="text-destructive hover:text-destructive"
-              onClick={() => {
-                if (confirm(`「${editing.name}」を削除しますか？`)) {
-                  removeAttendee(editing.id);
-                  toast.success("削除しました");
-                  onOpenChange(false);
-                }
-              }}
+              disabled={busy}
+              onClick={() => void remove()}
             >
               <Trash2 className="mr-1.5 size-4" />
               削除
@@ -307,7 +386,9 @@ export function AttendeeDialog({ open, onOpenChange, editing }: Props) {
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               キャンセル
             </Button>
-            <Button onClick={submit}>{editing ? "更新" : "追加"}</Button>
+            <Button onClick={() => void submit()} disabled={busy}>
+              {busy ? "保存中…" : editing ? "更新" : "追加"}
+            </Button>
           </div>
         </DialogFooter>
       </DialogContent>

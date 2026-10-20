@@ -7,8 +7,11 @@
  *   PUT  /api/seating?meeting=rec...    卓割を保存
  *   GET  /api/duties?meeting=rec...     その例会の TM・受付（当番表）
  *   PUT  /api/duties?meeting=rec...     TM・受付の卓を当番表「テーブル番号」へ保存
+ *   POST   /api/attendees?meeting=rec...         参加者を手で足す（出欠記録に入れる）
+ *   DELETE /api/attendees?meeting=rec...&id=rec... 参加者を外す
  *
  * 参加者の正は Lark BASE「出欠記録」。**出席の回答がある人だけ**を返す。
+ * 「手動出欠」（手で足した／外した印）が入っていれば、本部HPの回答（出欠）より優先する。
  * 自会場・他会場・ゲストの3区分すべてが受付を通るので、3つとも返す。
  *
  * 卓割の保存先:
@@ -22,6 +25,9 @@
  */
 import {
   ATTENDANCE_FIELDS,
+  CHANNEL_PROXY,
+  createRecord,
+  deleteRecord,
   DUTY_FIELDS,
   type Bindings,
   fieldDate,
@@ -29,6 +35,7 @@ import {
   fieldNumber,
   fieldText,
   LarkError,
+  MANUAL_ANSWER_FIELD,
   MEETING_FIELDS,
   searchAll,
   TABLES,
@@ -130,14 +137,14 @@ async function loadAttendees(
   env: Bindings,
   meetingId: string,
 ): Promise<{ attendees: Attendee[]; seats: Record<string, { tableNo: string; seatNo: number | null }> }> {
-  const records = await searchAll(env, TABLES.attendance, Object.values(ATTENDANCE_FIELDS))
+  const records = await searchAll(env, TABLES.attendance, [...Object.values(ATTENDANCE_FIELDS), MANUAL_ANSWER_FIELD])
 
   const attendees: Attendee[] = []
   const seats: Record<string, { tableNo: string; seatNo: number | null }> = {}
 
   for (const r of records) {
     if (!fieldLinkIds(r.fields[ATTENDANCE_FIELDS.meeting]).includes(meetingId)) continue
-    if (fieldText(r.fields[ATTENDANCE_FIELDS.answer]) !== '出席') continue
+    if (effectiveAnswer(r.fields) !== ANSWER.present) continue
 
     // 区分が空の行は 2026-08-18 以前に取り込んだ自会場ぶん
     const kind = fieldText(r.fields[ATTENDANCE_FIELDS.kind]) || KIND.own
@@ -354,6 +361,165 @@ async function applySewanin(env: Bindings, attendees: Attendee[]): Promise<void>
   }
 }
 
+// --- 参加者を手で足す・外す ---
+// ポータルの受付名簿（sewaninja-portal/src/routes/attendanceManage.ts）と同じ書き方。片方を直したらもう片方も直す。
+// 行を足す・「出欠」を書き換える・行を消す、のどれも本部HPの回答と食い違えば翌朝の取り込みで戻るので、
+// 取り込みが触れない「手動出欠」に出席／欠席を入れる。
+
+const ANSWER = { present: '出席', absent: '欠席' } as const
+
+/** 本部HPの回答より手動の出欠を優先する */
+function effectiveAnswer(fields: Record<string, unknown>): string {
+  return fieldText(fields[MANUAL_ANSWER_FIELD]) || fieldText(fields[ATTENDANCE_FIELDS.answer])
+}
+
+/** 外すときは卓も空ける。組み直す前に受付名簿へ古い卓が残らないように */
+const CLEAR_SEAT = { [ATTENDANCE_FIELDS.tableNo]: '', [ATTENDANCE_FIELDS.seatNo]: null }
+
+const isRecordId = (s: unknown): s is string => typeof s === 'string' && /^rec[A-Za-z0-9]{6,30}$/.test(s)
+
+/** 書き込みは同じ画面からだけ受ける。認証が無いので、他のサイトから叩かせない最低限の歯止め */
+function sameOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin')
+  return !origin || origin === new URL(req.url).origin
+}
+
+type AddInput = {
+  category?: unknown
+  venue?: unknown
+  name?: unknown
+  kana?: unknown
+  company?: unknown
+  referrer?: unknown
+}
+
+function text(v: unknown, max: number): string | null {
+  if (v === undefined || v === null) return ''
+  if (typeof v !== 'string' || v.trim().length > max) return null
+  return v.trim()
+}
+
+/** 1人ぶんの参加者を、参加者を取得したときと同じ形で組み立てる（名簿・当番・世話人を付けて） */
+async function attendeeById(env: Bindings, meetingId: string, recordId: string): Promise<Attendee | null> {
+  const { attendees } = await loadAttendees(env, meetingId)
+  await fillFromRoster(env, attendees)
+  await Promise.all([applyDuties(env, meetingId, attendees), applySewanin(env, attendees)])
+  return attendees.find((a) => a.id === recordId) ?? null
+}
+
+/**
+ * 参加者を1人足す。区分はツールの区分（会員 / ゲスト）と所属会場から決める（所属会場があれば他会場）。
+ * 同じ例会・区分・氏名の行が既にあれば（本部で欠席と答えた人・一度外した人）、その行を出席にするだけ。
+ * 自会場は会員データ_最新に居れば会員リンクを張り、氏名の表記を名簿にそろえる。
+ */
+async function handleAddAttendee(env: Bindings, meetingId: string, req: Request): Promise<Response> {
+  const body = (await req.json().catch(() => null)) as AddInput | null
+  if (!body) return json({ error: 'JSON を送ってください' }, 400)
+  const name = text(body.name, 50)
+  const kana = text(body.kana, 50)
+  const company = text(body.company, 100)
+  const venue = text(body.venue, 30)
+  const referrer = text(body.referrer, 50)
+  if (!name) return json({ error: '氏名を入れてください' }, 400)
+  if ([kana, company, venue, referrer].includes(null)) return json({ error: '入力が長すぎます' }, 400)
+  const kind = body.category === 'guest' ? KIND.guest : venue ? KIND.other : KIND.own
+
+  let member: { recordId: string; name: string; lineUserId: string } | null = null
+  if (kind === KIND.own) {
+    const members = await searchAll(env, TABLES.members, ['氏名', 'line_user_id', 'ステータス'])
+    const hits = members.filter(
+      (m) => fieldText(m.fields['ステータス']) === '有効' && nameKey(fieldText(m.fields['氏名'])) === nameKey(name),
+    )
+    if (hits.length > 1) return json({ error: `会員名簿に「${name}」が複数います。Lark で直接登録してください` }, 409)
+    if (hits[0]) {
+      member = {
+        recordId: hits[0].record_id,
+        name: fieldText(hits[0].fields['氏名']),
+        lineUserId: fieldText(hits[0].fields['line_user_id']),
+      }
+    }
+  }
+  const displayName = member?.name ?? name
+
+  const records = await searchAll(env, TABLES.attendance, [
+    ATTENDANCE_FIELDS.name,
+    ATTENDANCE_FIELDS.meeting,
+    ATTENDANCE_FIELDS.kind,
+    ATTENDANCE_FIELDS.answer,
+    MANUAL_ANSWER_FIELD,
+  ])
+  const prev = records.find(
+    (r) =>
+      fieldLinkIds(r.fields[ATTENDANCE_FIELDS.meeting]).includes(meetingId) &&
+      (fieldText(r.fields[ATTENDANCE_FIELDS.kind]) || KIND.own) === kind &&
+      nameKey(fieldText(r.fields[ATTENDANCE_FIELDS.name])) === nameKey(displayName),
+  )
+
+  let recordId: string
+  if (prev) {
+    if (effectiveAnswer(prev.fields) === ANSWER.present) {
+      return json({ error: `「${displayName}」さんはすでに参加者に入っています（参加者を取得し直してください）` }, 409)
+    }
+    recordId = prev.record_id
+    await updateRecord(env, TABLES.attendance, recordId, { [MANUAL_ANSWER_FIELD]: ANSWER.present })
+  } else {
+    const fields: Record<string, unknown> = {
+      [ATTENDANCE_FIELDS.name]: displayName,
+      [ATTENDANCE_FIELDS.meeting]: [meetingId],
+      [ATTENDANCE_FIELDS.kind]: kind,
+      [ATTENDANCE_FIELDS.answer]: ANSWER.present,
+      [ATTENDANCE_FIELDS.channel]: CHANNEL_PROXY,
+      [ATTENDANCE_FIELDS.answeredAt]: Date.now(),
+      [MANUAL_ANSWER_FIELD]: ANSWER.present,
+    }
+    if (member) {
+      fields[ATTENDANCE_FIELDS.member] = [member.recordId]
+      if (/^U[0-9a-f]{32}$/i.test(member.lineUserId)) fields[ATTENDANCE_FIELDS.lineUserId] = member.lineUserId
+    } else {
+      // 他会場・ゲスト（と名簿に居ない自会場）は、名簿に出す値をこの行が持つ
+      if (company) fields[ATTENDANCE_FIELDS.company] = company
+      if (kana) fields[ATTENDANCE_FIELDS.kana] = kana
+    }
+    if (kind === KIND.other) fields[ATTENDANCE_FIELDS.venueName] = venue
+    if (kind === KIND.guest && referrer) fields[ATTENDANCE_FIELDS.referrer] = referrer
+    recordId = await createRecord(env, TABLES.attendance, fields)
+  }
+  console.info('attendees: 追加', { recordId, kind, name: displayName, created: !prev })
+
+  const attendee = await attendeeById(env, meetingId, recordId)
+  if (!attendee) return json({ error: '追加した参加者を読み直せませんでした。参加者を取得し直してください' }, 500)
+  return json({ attendee, created: !prev })
+}
+
+/**
+ * 参加者を外す。「手動出欠」を欠席にし、卓を空ける（本部HPの回答はそのまま。ポータルの出欠回答一覧から戻せる）。
+ * 手で足しただけの行（回答経路=世話人代行で手動出欠=出席。本部HPに居ない人）は行ごと消す
+ */
+async function handleRemoveAttendee(env: Bindings, meetingId: string, recordId: string): Promise<Response> {
+  const records = await searchAll(env, TABLES.attendance, [
+    ATTENDANCE_FIELDS.name,
+    ATTENDANCE_FIELDS.meeting,
+    ATTENDANCE_FIELDS.channel,
+    MANUAL_ANSWER_FIELD,
+  ])
+  const target = records.find((r) => r.record_id === recordId)
+  // 別の例会の行は id を渡されても触らない
+  if (!target || !fieldLinkIds(target.fields[ATTENDANCE_FIELDS.meeting]).includes(meetingId)) {
+    return json({ error: '出欠記録に見つかりません。参加者を取得し直してください' }, 404)
+  }
+  const name = fieldText(target.fields[ATTENDANCE_FIELDS.name])
+  const proxyOnly =
+    fieldText(target.fields[ATTENDANCE_FIELDS.channel]) === CHANNEL_PROXY &&
+    fieldText(target.fields[MANUAL_ANSWER_FIELD]) === ANSWER.present
+  if (proxyOnly) {
+    await deleteRecord(env, TABLES.attendance, recordId)
+  } else {
+    await updateRecord(env, TABLES.attendance, recordId, { [MANUAL_ANSWER_FIELD]: ANSWER.absent, ...CLEAR_SEAT })
+  }
+  console.info('attendees: 外す', { recordId, name, deleted: proxyOnly })
+  return json({ removed: true, deleted: proxyOnly })
+}
+
 // --- 卓割の保存 ---
 
 type Assignment = { attendeeId: string; tableId: string; seatIndex: number }
@@ -483,6 +649,19 @@ export default {
         if (req.method === 'GET') return await handleGet(env, meetingId)
         if (req.method === 'PUT') return await handlePut(env, meetingId, req)
         return json({ error: 'GET か PUT を使ってください' }, 405)
+      }
+
+      if (url.pathname === '/api/attendees') {
+        const meetingId = url.searchParams.get('meeting')
+        if (!isRecordId(meetingId)) return json({ error: 'meeting を指定してください' }, 400)
+        if (!sameOrigin(req)) return json({ error: 'この画面以外からは変更できません' }, 403)
+        if (req.method === 'POST') return await handleAddAttendee(env, meetingId, req)
+        if (req.method === 'DELETE') {
+          const id = url.searchParams.get('id')
+          if (!isRecordId(id)) return json({ error: 'id を指定してください' }, 400)
+          return await handleRemoveAttendee(env, meetingId, id)
+        }
+        return json({ error: 'POST か DELETE を使ってください' }, 405)
       }
 
       if (url.pathname === '/api/duties') {
